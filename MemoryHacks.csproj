@@ -33,9 +33,28 @@
   <ItemGroup>
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="System" />
+    <Reference Include="System.Drawing" />
     <Reference Include="System.Numerics" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Memory Scanning\Scan Results\ScanResultByte.cs" />
+    <Compile Include="Memory Scanning\Scan Results\ScanResultByteArray.cs" />
+    <Compile Include="Memory Scanning\Scan Results\ScanResultInt16.cs" />
+    <Compile Include="Memory Scanning\Scan Results\ScanResultInt32.cs" />
+    <Compile Include="Memory Scanning\Scan Results\ScanResultInt64.cs" />
+    <Compile Include="Memory Scanning\Scan Results\ScanResultString.cs" />
+    <Compile Include="Memory Scanning\Scan Results\ScanResultUInt16.cs" />
+    <Compile Include="Memory Scanning\Scan Results\ScanResultUInt32.cs" />
+    <Compile Include="Memory Scanning\Scan Results\ScanResultUInt64.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueByte.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueByteArray.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueInt16.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueInt32.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueInt64.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueString.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueUInt16.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueUInt32.cs" />
+    <Compile Include="Memory Scanning\Scan Values\ScanValueUInt64.cs" />
     <Compile Include="Utils\CreateThreadFunction.cs" />
     <Compile Include="MemoryHacksLib.cs" />
     <Compile Include="Utils\LoadLibraryFunction.cs" />
@@ -46,6 +65,7 @@
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
     <Compile Include="Utils\ProtoRandom.cs" />
+    <Compile Include="Utils\WindowInfo.cs" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>

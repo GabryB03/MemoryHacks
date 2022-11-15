@@ -14,3 +14,11 @@ C:\Users\gabry\Desktop\Computer\Developing\Progetti\ciao\MemoryHacks\obj\Release
 C:\Users\gabry\Desktop\Computer\Developing\Progetti\ciao\MemoryHacks\obj\Release\MemoryHacks.csproj.CoreCompileInputs.cache
 C:\Users\gabry\Desktop\Computer\Developing\Progetti\ciao\MemoryHacks\obj\Release\MemoryHacks.dll
 C:\Users\gabry\Desktop\Computer\Developing\Progetti\ciao\MemoryHacks\obj\Release\MemoryHacks.pdb
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\bin\Release\MemoryHacks.dll
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\bin\Release\MemoryHacks.pdb
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.csproj.AssemblyReference.cache
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.Properties.Resources.resources
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.csproj.GenerateResource.cache
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.csproj.CoreCompileInputs.cache
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.dll
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.pdb

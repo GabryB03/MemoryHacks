@@ -67,6 +67,11 @@ namespace MemoryHacks
         [DllImport("ntdll.dll", SetLastError = true)]
         private static extern IntPtr NtCreateThreadEx(ref IntPtr threadHandle, UInt32 desiredAccess, IntPtr objectAttributes, IntPtr processHandle, IntPtr startAddress, IntPtr parameter, bool inCreateSuspended, Int32 stackZeroBits, Int32 sizeOfStack, Int32 maximumStackSize, IntPtr attributeList);
 
+        private delegate bool EnumThreadDelegate(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumThreadWindows(int dwThreadId, EnumThreadDelegate lpfn, IntPtr lParam);
+
         public int ProcessId { get; private set; }
         public IntPtr ProcessHandle { get; private set; }
         public Process DiagnosticsProcess { get; private set; }
@@ -152,7 +157,7 @@ namespace MemoryHacks
                 {
                     if (module.ModuleName == moduleName)
                     {
-                        return new ModuleInfo(module, module.BaseAddress, (uint)module.ModuleMemorySize);
+                        return new ModuleInfo(module, module.BaseAddress, (uint)module.ModuleMemorySize, (uint) DiagnosticsProcess.Id, DiagnosticsProcess);
                     }
                 }
                 catch
@@ -187,7 +192,7 @@ namespace MemoryHacks
             {
                 try
                 {
-                    modules.Add(new ModuleInfo(module, module.BaseAddress, (uint)module.ModuleMemorySize));
+                    modules.Add(new ModuleInfo(module, module.BaseAddress, (uint)module.ModuleMemorySize, (uint) DiagnosticsProcess.Id, DiagnosticsProcess));
                 }
                 catch
                 {
@@ -3944,7 +3949,6 @@ namespace MemoryHacks
         {
             try
             {
-                IntPtr procHandle = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, false, ProcessId);
                 IntPtr remoteThread = new IntPtr(0);
                 IntPtr loadLibraryAddress = IntPtr.Zero;
 
@@ -3961,13 +3965,13 @@ namespace MemoryHacks
                         break;
                 }
 
-                IntPtr allocatedMemoryAddress = VirtualAllocEx(procHandle, IntPtr.Zero, (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-                WriteProcessMemory(procHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), 0);
+                IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), 0);
 
                 switch (threadFunction)
                 {
                     case CreateThreadFunction.CreateRemoteThread:
-                        CreateRemoteThread(procHandle, IntPtr.Zero, 0, loadLibraryAddress, allocatedMemoryAddress, 0, IntPtr.Zero);
+                        CreateRemoteThread(ProcessHandle, IntPtr.Zero, 0, loadLibraryAddress, allocatedMemoryAddress, 0, IntPtr.Zero);
                         break;
                     case CreateThreadFunction.RtlCreateUserThread:
                         RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, loadLibraryAddress, allocatedMemoryAddress, ref remoteThread, IntPtr.Zero);
@@ -4317,6 +4321,7 @@ namespace MemoryHacks
 
         public uint GetAddressFromPointerScan(string address)
         {
+            address = address.Replace(",", " ");
             uint baseAddress = 0;
             List<uint> offsets = new List<uint>();
 
@@ -4345,7 +4350,27 @@ namespace MemoryHacks
             return GetAddressFromPointerScan(address);
         }
 
-        private byte[] GetPatternFromString(string pattern)
+        public string GetStringFromAddress(uint address)
+        {
+            return address.ToString("X4");
+        }
+
+        public string GetStringFromAddress(IntPtr address)
+        {
+            return GetStringFromAddress((uint)address);
+        }
+
+        public string ConvertAddressToString(uint address)
+        {
+            return address.ToString("X4");
+        }
+
+        public string ConvertAddressToString(IntPtr address)
+        {
+            return GetStringFromAddress((uint)address);
+        }
+
+        public byte[] GetPatternFromString(string pattern)
         {
             List<byte> bytes = new List<byte>();
 
@@ -4364,7 +4389,12 @@ namespace MemoryHacks
             return bytes.ToArray();
         }
 
-        private string GetMaskFromString(string pattern)
+        public byte[] GetBytesFromString(string str)
+        {
+            return GetPatternFromString(str);
+        }
+
+        public string GetMaskFromString(string pattern)
         {
             string mask = "";
 
@@ -4383,7 +4413,7 @@ namespace MemoryHacks
             return mask;
         }
 
-        private string GetMaskFromBytes(byte[] bytes)
+        public string GetMaskFromBytes(byte[] bytes)
         {
             string mask = "";
 
@@ -5326,6 +5356,42 @@ namespace MemoryHacks
             WriteProtectedBits((IntPtr)offset, bits);
         }
 
+        public bool[] ReadBits(IntPtr offset)
+        {
+            byte[] buffer = new byte[1] { ReadByte(offset) };
+            bool[] result = new bool[8];
+
+            for (var i = 0; i < 8; i++)
+            {
+                result[i] = Convert.ToBoolean(buffer[0] & (1 << i));
+            }
+
+            return result;
+        }
+
+        public bool[] ReadProtectedBits(IntPtr offset)
+        {
+            byte[] buffer = new byte[1] { ReadProtectedByte(offset) };
+            bool[] result = new bool[8];
+
+            for (var i = 0; i < 8; i++)
+            {
+                result[i] = Convert.ToBoolean(buffer[0] & (1 << i));
+            }
+
+            return result;
+        }
+
+        public bool[] ReadBits(uint offset)
+        {
+            return ReadBits((IntPtr)offset);
+        }
+
+        public bool[] ReadProtectedBits(uint offset)
+        {
+            return ReadProtectedBits((IntPtr)offset);
+        }
+
         public void Write(string offset, string type, string data)
         {
             uint address = ParseAddress(offset);
@@ -5614,6 +5680,1048 @@ namespace MemoryHacks
         public bool IsPattern(string pattern, uint offset = 0, string module = "")
         {
             return FindPattern(pattern, offset, module) != 0;
+        }
+
+        public void Dispose()
+        {
+            CloseHandle(ProcessHandle);
+            ProcessHandle = IntPtr.Zero;
+            DiagnosticsProcess = null;
+            ProcessId = -1;
+            BaseAddress = IntPtr.Zero;
+            GC.Collect();
+        }
+
+        public void EjectModule(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            try
+            {
+                IntPtr remoteThread = new IntPtr(0);
+                IntPtr freeLibraryAddress = GetProcAddress(GetModuleHandle("kernel32.dll"), "FreeLibrary");
+                IntPtr moduleBaseAddress = GetModuleInfo(moduleName).BaseAddress;
+
+                switch (threadFunction)
+                {
+                    case CreateThreadFunction.CreateRemoteThread:
+                        CreateRemoteThread(ProcessHandle, IntPtr.Zero, 0, freeLibraryAddress, moduleBaseAddress, 0, IntPtr.Zero);
+                        break;
+                    case CreateThreadFunction.RtlCreateUserThread:
+                        RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, freeLibraryAddress, moduleBaseAddress, ref remoteThread, IntPtr.Zero);
+                        break;
+                    case CreateThreadFunction.NtCreateThreadEx:
+                        NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleBaseAddress, false, 0, 0, 0, IntPtr.Zero);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"An error occurred while ejecting the module.\r\n{ex.Message}\r\n{ex.Source}\r\n{ex.StackTrace}");
+            }
+        }
+
+        public void EjectModule(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            try
+            {
+                IntPtr remoteThread = new IntPtr(0);
+                IntPtr freeLibraryAddress = GetProcAddress(GetModuleHandle("kernel32.dll"), "FreeLibrary");
+
+                switch (threadFunction)
+                {
+                    case CreateThreadFunction.CreateRemoteThread:
+                        CreateRemoteThread(ProcessHandle, IntPtr.Zero, 0, freeLibraryAddress, moduleAddress, 0, IntPtr.Zero);
+                        break;
+                    case CreateThreadFunction.RtlCreateUserThread:
+                        RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, freeLibraryAddress, moduleAddress, ref remoteThread, IntPtr.Zero);
+                        break;
+                    case CreateThreadFunction.NtCreateThreadEx:
+                        NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleAddress, false, 0, 0, 0, IntPtr.Zero);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"An error occurred while ejecting the module.\r\n{ex.Message}\r\n{ex.Source}\r\n{ex.StackTrace}");
+            }
+        }
+
+        public void EjectModule(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule((IntPtr)moduleAddress, threadFunction);
+        }
+
+        public void EjectDLL(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void EjectLibrary(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void FreeLibrary(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void FreeDLL(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void FreeModule(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void UninjectDLL(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void UninjectLibrary(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void UninjectModule(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void DejectLibrary(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void DejectDLL(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void DejectModule(string moduleName, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleName, threadFunction);
+        }
+
+        public void EjectDLL(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void EjectLibrary(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void FreeLibrary(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void FreeDLL(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void FreeModule(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void UninjectDLL(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void UninjectLibrary(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void UninjectModule(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void DejectLibrary(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void DejectDLL(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void DejectModule(IntPtr moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void EjectDLL(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void EjectLibrary(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void FreeLibrary(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void FreeDLL(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void FreeModule(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void UninjectDLL(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void UninjectLibrary(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void UninjectModule(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void DejectLibrary(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void DejectDLL(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void DejectModule(uint moduleAddress, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            EjectModule(moduleAddress, threadFunction);
+        }
+
+        public void ManualMapLibrary(string pathToModule)
+        {
+            MapModule(pathToModule);
+        }
+
+        public void ManualMapLibrary(byte[] moduleBytes)
+        {
+            MapModule(moduleBytes);
+        }
+
+        public void MapLibrary(string pathToModule)
+        {
+            MapModule(pathToModule);
+        }
+
+        public void MapLibrary(byte[] moduleBytes)
+        {
+            MapModule(moduleBytes);
+        }
+
+        public void InjectLibrary(string pathToModule, LoadLibraryFunction libraryFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            InjectModule(pathToModule, libraryFunction, threadFunction);
+        }
+
+        public void LoadLibrary(string pathToModule, LoadLibraryFunction libraryFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            InjectModule(pathToModule, libraryFunction, threadFunction);
+        }
+
+        public ScanResultInt32 ScanMemoryForInt32(int value, bool allModules = false)
+        {
+            List<ScanValueInt32> values = new List<ScanValueInt32>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    byte[] theBytes = new byte[4] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3] };
+                                    int newValue = BitConverter.ToInt32(theBytes, 0);
+
+                                    if (newValue == value)
+                                    {
+                                        values.Add(new ScanValueInt32((IntPtr)i, newValue, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultInt32(values);
+        }
+
+        public ScanResultInt32 ScanMemoryForInteger(int value, bool allModules = false)
+        {
+            return ScanMemoryForInt32(value, allModules);
+        }
+
+        public ScanResultInt16 ScanMemoryForInt16(short value, bool allModules = false)
+        {
+            List<ScanValueInt16> values = new List<ScanValueInt16>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    byte[] theBytes = new byte[2] { moduleBytes[i], moduleBytes[i + 1] };
+                                    short newValue = BitConverter.ToInt16(theBytes, 0);
+
+                                    if (newValue == value)
+                                    {
+                                        values.Add(new ScanValueInt16((IntPtr)i, newValue, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultInt16(values);
+        }
+
+        public ScanResultInt16 ScanMemoryForShort(short value, bool allModules = false)
+        {
+            return ScanMemoryForInt16(value, allModules);
+        }
+
+        public ScanResultInt64 ScanMemoryForInt64(long value, bool allModules = false)
+        {
+            List<ScanValueInt64> values = new List<ScanValueInt64>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    byte[] theBytes = new byte[8] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3], moduleBytes[i + 4], moduleBytes[i + 5], moduleBytes[i + 6], moduleBytes[i + 7] };
+                                    long newValue = BitConverter.ToInt64(theBytes, 0);
+
+                                    if (newValue == value)
+                                    {
+                                        values.Add(new ScanValueInt64((IntPtr)i, newValue, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultInt64(values);
+        }
+
+        public ScanResultInt64 ScanMemoryForLong(long value, bool allModules = false)
+        {
+            return ScanMemoryForInt64(value, allModules);
+        }
+
+        public ScanResultUInt32 ScanMemoryForUInt32(uint value, bool allModules = false)
+        {
+            List<ScanValueUInt32> values = new List<ScanValueUInt32>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    byte[] theBytes = new byte[4] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3] };
+                                    uint newValue = BitConverter.ToUInt32(theBytes, 0);
+
+                                    if (newValue == value)
+                                    {
+                                        values.Add(new ScanValueUInt32((IntPtr)i, newValue, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultUInt32(values);
+        }
+
+        public ScanResultUInt32 ScanMemoryForUnsignedInteger(uint value, bool allModules = false)
+        {
+            return ScanMemoryForUInt32(value, allModules);
+        }
+
+        public ScanResultUInt32 ScanMemoryForUnsignedInt32(uint value, bool allModules = false)
+        {
+            return ScanMemoryForUInt32(value, allModules);
+        }
+
+        public ScanResultUInt32 ScanMemoryForUInteger(uint value, bool allModules = false)
+        {
+            return ScanMemoryForUInt32(value, allModules);
+        }
+
+        public ScanResultUInt16 ScanMemoryForUInt16(ushort value, bool allModules = false)
+        {
+            List<ScanValueUInt16> values = new List<ScanValueUInt16>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    byte[] theBytes = new byte[2] { moduleBytes[i], moduleBytes[i + 1] };
+                                    ushort newValue = BitConverter.ToUInt16(theBytes, 0);
+
+                                    if (newValue == value)
+                                    {
+                                        values.Add(new ScanValueUInt16((IntPtr)i, newValue, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultUInt16(values);
+        }
+
+        public ScanResultUInt16 ScanMemoryForUnsignedShort(ushort value, bool allModules = false)
+        {
+            return ScanMemoryForUInt16(value, allModules);
+        }
+
+        public ScanResultUInt16 ScanMemoryForUnsignedInt16(ushort value, bool allModules = false)
+        {
+            return ScanMemoryForUInt16(value, allModules);
+        }
+
+        public ScanResultUInt16 ScanMemoryForUShort(ushort value, bool allModules = false)
+        {
+            return ScanMemoryForUInt16(value, allModules);
+        }
+
+        public ScanResultUInt64 ScanMemoryForUInt64(ulong value, bool allModules = false)
+        {
+            List<ScanValueUInt64> values = new List<ScanValueUInt64>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    byte[] theBytes = new byte[8] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3], moduleBytes[i + 4], moduleBytes[i + 5], moduleBytes[i + 6], moduleBytes[i + 7] };
+                                    ulong newValue = BitConverter.ToUInt64(theBytes, 0);
+
+                                    if (newValue == value)
+                                    {
+                                        values.Add(new ScanValueUInt64((IntPtr)i, newValue, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultUInt64(values);
+        }
+
+        public ScanResultUInt64 ScanMemoryForUnsignedLong(ulong value, bool allModules = false)
+        {
+            return ScanMemoryForUInt64(value, allModules);
+        }
+
+        public ScanResultUInt64 ScanMemoryForUnsignedInt64(ulong value, bool allModules = false)
+        {
+            return ScanMemoryForUInt64(value, allModules);
+        }
+
+        public ScanResultUInt64 ScanMemoryForULong(ulong value, bool allModules = false)
+        {
+            return ScanMemoryForUInt64(value, allModules);
+        }
+
+        public ScanResultByte ScanMemoryForByte(byte value, bool allModules = false)
+        {
+            List<ScanValueByte> values = new List<ScanValueByte>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    if (value == moduleBytes[i])
+                                    {
+                                        values.Add(new ScanValueByte((IntPtr)i, value, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultByte(values);
+        }
+
+        public byte[] GetBeforeBytes(IntPtr address, uint size)
+        {
+            uint theAddress = (uint)address;
+            theAddress = theAddress - size;
+            return ReadBytes(theAddress, size);
+        }
+
+        public byte[] GetBeforePattern(IntPtr address, uint size)
+        {
+            return GetBeforeBytes(address, size);
+        }
+
+        public byte[] GetBeforeBytes(uint address, uint size)
+        {
+            return GetBeforeBytes((IntPtr)address, size);
+        }
+
+        public byte[] GetBeforePattern(uint address, uint size)
+        {
+            return GetBeforeBytes((IntPtr)address, size);
+        }
+
+        public ScanResultByteArray ScanMemoryForByteArray(byte[] value, bool allModules = false)
+        {
+            List<ScanValueByteArray> values = new List<ScanValueByteArray>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    byte[] newValue = moduleBytes.Skip(i).Take(value.Length).ToArray();
+
+                                    if (CompareByteArrays(newValue, value))
+                                    {
+                                        values.Add(new ScanValueByteArray((IntPtr)i, value, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultByteArray(values);
+        }
+
+        public ScanResultString ScanMemoryForString(string value, Encoding encoding, bool allModules = false)
+        {
+            List<ScanValueString> values = new List<ScanValueString>();
+            string mainModuleName = DiagnosticsProcess.MainModule.ModuleName;
+
+            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            {
+                try
+                {
+                    uint moduleSize = (uint)module.ModuleMemorySize;
+                    IntPtr moduleBaseAddress = module.BaseAddress;
+                    string moduleName = module.ModuleName;
+
+                    if (!allModules)
+                    {
+                        if (moduleName != mainModuleName)
+                        {
+                            continue;
+                        }
+                    }
+
+                    byte[] moduleBytes = new byte[moduleSize];
+                    IntPtr numBytes;
+                    byte[] bytesValue = encoding.GetBytes(value);
+
+                    try
+                    {
+                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        {
+                            for (int i = 0; i < moduleSize; i++)
+                            {
+                                try
+                                {
+                                    byte[] newValue = moduleBytes.Skip(i).Take(bytesValue.Length).ToArray();
+                                   
+                                    if (CompareByteArrays(newValue, bytesValue))
+                                    {
+                                        values.Add(new ScanValueString((IntPtr)i, value, moduleName));
+                                    }
+                                }
+                                catch
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return new ScanResultString(values);
+        }
+
+        public static bool CompareByteArrays(byte[] first, byte[] second)
+        {
+            if (first.Length != second.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < first.Length; i++)
+            {
+                if (first[i] != second[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public ScanResultByteArray ScanMemoryForBytes(byte[] value, bool allModules = false)
+        {
+            return ScanMemoryForByteArray(value, allModules);
+        }
+
+        public List<WindowInfo> GetWindows()
+        {
+            List<WindowInfo> windows = new List<WindowInfo>();
+
+            foreach (ProcessThread thread in DiagnosticsProcess.Threads)
+            {
+                EnumThreadWindows(thread.Id,
+                (hWnd, lParam) =>
+                {
+                    windows.Add(new WindowInfo(hWnd, DiagnosticsProcess, thread, (uint)DiagnosticsProcess.Id, (uint)thread.Id));
+                    return true;
+                },
+                IntPtr.Zero);
+            }
+
+            return windows;
+        }
+
+        public List<WindowInfo> GetWindowsInformations()
+        {
+            return GetWindows();
+        }
+
+        public List<WindowInfo> GetWindowsInfos()
+        {
+            return GetWindows();
+        }
+
+        public List<WindowInfo> GetWindowsInfo()
+        {
+            return GetWindows();
+        }
+
+        public WindowInfo GetMainWindow()
+        {
+            foreach (WindowInfo windowInfo in GetWindows())
+            {
+                if (windowInfo.IsMainWindow)
+                {
+                    return windowInfo;
+                }
+            }
+
+            throw new Exception("Can not find the main window of the process.");
+        }
+
+        public List<WindowInfo> GetVisibleWindows()
+        {
+            List<WindowInfo> windows = new List<WindowInfo>();
+
+            foreach (WindowInfo info in GetWindows())
+            {
+                if (info.IsVisible)
+                {
+                    windows.Add(info);
+                }
+            }
+
+            return windows;
+        }
+
+        public List<WindowInfo> GetVisibleWindowsInformations()
+        {
+            return GetVisibleWindows();
+        }
+
+        public List<WindowInfo> GetVisibleWindowsInfos()
+        {
+            return GetVisibleWindows();
+        }
+
+        public void SetMainWindowTitle(string title)
+        {
+            GetMainWindow().SetWindowTitle(title);
+        }
+
+        public void SetMainWindowText(string title)
+        {
+            GetMainWindow().SetWindowTitle(title);
+        }
+
+        public void MinimizeMainWindow()
+        {
+            GetMainWindow().MinimizeWindow();
+        }
+
+        public void MaximizeMainWindow()
+        {
+            GetMainWindow().MaximizeWindow();
+        }
+
+        public void CloseMainWindow()
+        {
+            GetMainWindow().CloseWindow();
+        }
+
+        public void FocusMainWindow()
+        {
+            GetMainWindow().FocusWindow();
+        }
+
+        public string GetMainWindowTitle()
+        {
+            return GetMainWindow().WindowTitle;
+        }
+
+        public string GetMainWindowText()
+        {
+            return GetMainWindow().WindowTitle;
+        }
+
+        public bool IsProcessFocused()
+        {
+            foreach (WindowInfo info in GetWindows())
+            {
+                if (info.IsFocused)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool IsProcessInFocus()
+        {
+            return IsProcessFocused();
         }
     }
 }
