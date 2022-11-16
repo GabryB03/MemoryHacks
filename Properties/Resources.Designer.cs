@@ -61,6 +61,31 @@ namespace MemoryHacks.Properties {
         }
         
         /// <summary>
+        ///   Cerca una stringa localizzata simile a #HEADERS#
+        ///
+        ///DWORD WINAPI DllProcess(LPVOID lpParam)
+        ///{
+        ///	#CODE#
+        ///	return 0;
+        ///}
+        ///
+        ///BOOL WINAPI DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
+        ///{
+        ///    if (ul_reason_for_call == DLL_PROCESS_ATTACH)
+        ///    {
+        ///		CreateThread(0, 0, DllProcess, 0, 0, 0);   
+        ///    }
+        ///
+        ///    return TRUE;
+        ///}.
+        /// </summary>
+        internal static string BaseCode {
+            get {
+                return ResourceManager.GetString("BaseCode", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Cerca una risorsa localizzata di tipo System.Byte[].
         /// </summary>
         internal static byte[] Lunar {

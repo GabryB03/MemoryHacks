@@ -22,3 +22,6 @@ C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories
 C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.csproj.CoreCompileInputs.cache
 C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.dll
 C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.pdb
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\bin\Release\Fasm.NET.dll
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\bin\Release\Fasm.NET.xml
+C:\Users\gabry\Desktop\Computer\Developing\Progetti\GabryB03 GitHub\Repositories\MemoryHacks\obj\Release\MemoryHacks.csproj.CopyComplete

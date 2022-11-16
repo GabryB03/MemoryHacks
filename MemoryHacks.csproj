@@ -29,8 +29,12 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Fasm.NET, Version=1.0.4939.27955, Culture=neutral, processorArchitecture=x86">
+      <HintPath>packages\Fasm.NET.1.70.03.2\lib\Fasm.NET.dll</HintPath>
+    </Reference>
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="System" />
     <Reference Include="System.Drawing" />
@@ -55,19 +59,25 @@
     <Compile Include="Memory Scanning\Scan Values\ScanValueUInt16.cs" />
     <Compile Include="Memory Scanning\Scan Values\ScanValueUInt32.cs" />
     <Compile Include="Memory Scanning\Scan Values\ScanValueUInt64.cs" />
-    <Compile Include="Utils\CreateThreadFunction.cs" />
+    <Compile Include="ASM Injection\AssemblyInjectionMethod.cs" />
+    <Compile Include="CPP Injection\CppCode.cs" />
+    <Compile Include="CPP Injection\CppInclude.cs" />
+    <Compile Include="DLL Injection\CreateThreadFunction.cs" />
     <Compile Include="MemoryHacksLib.cs" />
-    <Compile Include="Utils\LoadLibraryFunction.cs" />
-    <Compile Include="Utils\ModuleInfo.cs" />
+    <Compile Include="DLL Injection\LoadLibraryFunction.cs" />
+    <Compile Include="Process Info\ModuleInfo.cs" />
     <Compile Include="Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
     <Compile Include="Utils\ProtoRandom.cs" />
-    <Compile Include="Utils\WindowInfo.cs" />
+    <Compile Include="Process Info\WindowInfo.cs" />
   </ItemGroup>
-  <ItemGroup />
+  <ItemGroup>
+    <None Include="packages.config" />
+    <None Include="Resources\BaseCode.cpp" />
+  </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>

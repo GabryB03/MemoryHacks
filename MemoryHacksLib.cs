@@ -8,6 +8,8 @@ using System.IO;
 using System.Runtime.ConstrainedExecution;
 using System.Security;
 using System.Linq;
+using System.Reflection;
+using System.Threading;
 
 namespace MemoryHacks
 {
@@ -71,6 +73,13 @@ namespace MemoryHacks
 
         [DllImport("user32.dll")]
         private static extern bool EnumThreadWindows(int dwThreadId, EnumThreadDelegate lpfn, IntPtr lParam);
+
+        [DllImport("kernel32.dll", SetLastError = true, CallingConvention = CallingConvention.Winapi)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWow64Process([In] IntPtr process, [Out] out bool wow64Process);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr QueueUserAPC(IntPtr pfnAPC, IntPtr hThread, IntPtr dwData);
 
         public int ProcessId { get; private set; }
         public IntPtr ProcessHandle { get; private set; }
@@ -3949,6 +3958,21 @@ namespace MemoryHacks
         {
             try
             {
+                if (File.Exists(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "\\" + Path.GetFileNameWithoutExtension(pathToModule) + ".dll"))
+                {
+                    pathToModule = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "\\" + Path.GetFileNameWithoutExtension(pathToModule) + ".dll";
+                }
+
+                if (!File.Exists(pathToModule))
+                {
+                    throw new Exception("The specified DLL file does not exist.");
+                }
+
+                if (!Path.GetExtension(pathToModule).ToLower().Equals(".dll"))
+                {
+                    throw new Exception("The specified DLL file has an invalid extension.");
+                }
+
                 IntPtr remoteThread = new IntPtr(0);
                 IntPtr loadLibraryAddress = IntPtr.Zero;
 
@@ -4050,6 +4074,21 @@ namespace MemoryHacks
         {
             try
             {
+                if (File.Exists(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "\\" + Path.GetFileNameWithoutExtension(pathToModule) + ".dll"))
+                {
+                    pathToModule = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "\\" + Path.GetFileNameWithoutExtension(pathToModule) + ".dll";
+                }
+
+                if (!File.Exists(pathToModule))
+                {
+                    throw new Exception("The specified DLL file does not exist.");
+                }
+
+                if (!Path.GetExtension(pathToModule).ToLower().Equals(".dll"))
+                {
+                    throw new Exception("The specified DLL file has an invalid extension.");
+                }
+
                 MapModule(File.ReadAllBytes(pathToModule));
             }
             catch (Exception ex)
@@ -6722,6 +6761,749 @@ namespace MemoryHacks
         public bool IsProcessInFocus()
         {
             return IsProcessFocused();
+        }
+
+        public void ExecuteCppCode(CppCode code, bool is64Bit, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            try
+            {
+                string completeCode = Properties.Resources.BaseCode;
+                string theIncludes = "";
+
+                foreach (CppInclude include in code.Includes)
+                {
+                    string pInclude = include.Include;
+
+                    if (!pInclude.StartsWith("#include <"))
+                    {
+                        pInclude = "#include <" + pInclude + ">";
+                    }
+
+                    if (theIncludes == "")
+                    {
+                        theIncludes = pInclude;
+                    }
+                    else
+                    {
+                        theIncludes += "\r\n" + pInclude;
+                    }
+                }
+
+                completeCode = completeCode.Replace("#INCLUDES_CODE#", theIncludes);
+                completeCode = completeCode.Replace("#CODE_INTO_DLL_MAIN#", code.DllMainCode);
+                completeCode = completeCode.Replace("#BEFORE_DLL_MAIN_CODE#", code.BeforeDllMainCode);
+                completeCode = completeCode.Replace("#AFTER_DLL_MAIN_CODE#", code.AfterDllMainCode);
+
+                string rootDir = Environment.GetFolderPath(Environment.SpecialFolder.System).Substring(0, 1) + ":";
+
+                if (!Directory.Exists(rootDir + "\\Temp"))
+                {
+                    Directory.CreateDirectory(rootDir + "\\Temp");
+                }
+
+                char[] characters = "abcdefghijklmnopqrstuvwxyzACBDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray();
+                ProtoRandom random = new ProtoRandom(5);
+                string folderName = random.GetRandomString(characters, random.GetRandomInt32(7, 18));
+                Directory.CreateDirectory(rootDir + "\\Temp\\" + folderName);
+
+                DirectoryInfo info = new DirectoryInfo(rootDir + "\\Temp\\" + folderName);
+                info.Attributes = FileAttributes.Hidden | FileAttributes.Directory | FileAttributes.ReadOnly;
+
+                string cppFileName = random.GetRandomString(characters, random.GetRandomInt32(7, 18)) + ".cpp";
+                string dllFileName = random.GetRandomString(characters, random.GetRandomInt32(7, 18)) + ".dll";
+
+                File.WriteAllText(rootDir + "\\Temp\\" + folderName + "\\" + cppFileName, completeCode);
+                HideFile(rootDir + "\\Temp\\" + folderName + "\\" + cppFileName);
+
+                ProcessStartInfo startInfo = new ProcessStartInfo();
+                startInfo.FileName = "gcc.exe";
+
+                if (is64Bit)
+                {
+                    startInfo.Arguments = "-shared -o \"" + rootDir + "\\Temp\\" + folderName + "\\" + dllFileName + "\" \"" + rootDir + "\\Temp\\" + folderName + "\\" + cppFileName + "\"";
+                }
+                else
+                {
+                    startInfo.Arguments = "-m32 -shared -o \"" + rootDir + "\\Temp\\" + folderName + "\\" + dllFileName + "\" \"" + rootDir + "\\Temp\\" + folderName + "\\" + cppFileName + "\"";
+                }
+
+                startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                startInfo.CreateNoWindow = true;
+
+                Process proc = Process.Start(startInfo);
+                proc.WaitForExit();
+
+                while (!File.Exists(rootDir + "\\Temp\\" + folderName + "\\" + dllFileName))
+                {
+                    Thread.Sleep(5);
+                }
+
+                HideFile(rootDir + "\\Temp\\" + folderName + "\\" + dllFileName);   
+                InjectDLL(rootDir + "\\Temp\\" + folderName + "\\" + dllFileName, loadFunction, threadFunction);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to execute the C++ code.\r\n{ex.Message}\r\n{ex.StackTrace}\r\n{ex.Source}");
+            }
+        }
+
+        public void InjectCppCode(CppCode code, bool is64Bit, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            ExecuteCppCode(code, is64Bit, loadFunction, threadFunction);
+        }
+
+        public void RunCppCode(CppCode code, bool is64Bit, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            ExecuteCppCode(code, is64Bit, loadFunction, threadFunction);
+        }
+
+        public void ForceCppCode(CppCode code, bool is64Bit, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            ExecuteCppCode(code, is64Bit, loadFunction, threadFunction);
+        }
+
+        public bool IsProcessRunning()
+        {
+            foreach (Process proc in Process.GetProcesses())
+            {
+                try
+                {
+                    if (proc.Id == ProcessId)
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return false;
+        }
+
+        public bool IsProcessWorking()
+        {
+            return IsProcessRunning();
+        }
+
+        public bool IsProcessAlive()
+        {
+            return IsProcessRunning();
+        }
+
+        public string ConvertBytesToString(byte[] bytes)
+        {
+            return BitConverter.ToString(bytes).Replace("-", " ");
+        }
+
+        public byte[] ConvertStringToBytes(string str)
+        {
+            if (str.Contains(",") || str.Contains(" "))
+            {
+                if (str.Contains(","))
+                {
+                    str = str.Replace(",", " ");
+                }
+
+                List<byte> bytes = new List<byte>();
+
+                foreach (string segment in str.Split(' '))
+                {
+                    if (segment == "??" || segment == "?")
+                    {
+                        bytes.Add(0x00);
+                    }
+                    else
+                    {
+                        bytes.Add((byte)UInt32.Parse(segment, System.Globalization.NumberStyles.HexNumber));
+                    }
+                }
+
+                return bytes.ToArray();
+            }
+            else
+            {
+                return new byte[1] { (byte)UInt32.Parse(str, System.Globalization.NumberStyles.HexNumber) };
+            }
+        }
+
+        public byte[] CompileAssemblyCode(string asm)
+        {
+            List<string> theList = new List<string>();
+
+            foreach (string line in SplitToLines(asm))
+            {
+                theList.Add(line);
+            }
+
+            return Binarysharp.Assemblers.Fasm.FasmNet.Assemble(theList.ToArray(), 1000, 10);
+        }
+
+        public byte[] CompileAssembly(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] CompileAsmCode(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] CompileAsm(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] GetAsm(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] GetAssembly(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] GetAsmBytes(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] GetAssemblyBytes(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] ConvertAsmToBytes(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] ConvertAssemblyToBytes(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] CompileShellcode(string asm)
+        {
+            return CompileAssembly(asm);
+        }
+
+        public byte[] CompileShell(string asm)
+        {
+            return CompileAssembly(asm);
+        }
+
+        public byte[] GetShellcode(string asm)
+        {
+            return CompileAssembly(asm);
+        }
+
+        public byte[] GetShell(string asm)
+        {
+            return CompileAssembly(asm);
+        }
+
+        public byte[] GetShellcodeBytes(string asm)
+        {
+            return CompileAssembly(asm);
+        }
+
+        public byte[] GetShellBytes(string asm)
+        {
+            return CompileAssembly(asm);
+        }
+
+        public byte[] ConvertAsmToShellcode(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] ConvertAssemblyToShellcode(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] ConvertAsmToShell(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        public byte[] ConvertAssemblyToShell(string asm)
+        {
+            return CompileAssemblyCode(asm);
+        }
+
+        private IEnumerable<string> SplitToLines(string input)
+        {
+            if (input == null)
+            {
+                yield break;
+            }
+
+            using (StringReader reader = new StringReader(input))
+            {
+                string line;
+
+                while ((line = reader.ReadLine()) != null)
+                {
+                    yield return line;
+                }
+            }
+        }
+
+        public void InjectAssemblyCode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectAsmCode(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void InjectAsmCode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectAssembly(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void InjectAssembly(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectAsm(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void InjectAsm(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectAssemblyBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void InjectAssemblyString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectAsmBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void InjectAsmString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectShellcode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectShell(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void InjectShellcodeString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectShellcodeBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void InjectShell(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunAssemblyCode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunAsmCode(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void RunAsmCode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunAssembly(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void RunAssembly(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunAsm(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void RunAsm(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunAssemblyBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void RunAssemblyString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunAsmBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void RunAsmString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunShellcode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunShell(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void RunShellcodeString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void RunShellcodeBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void RunShell(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteAssemblyCode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteAsmCode(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void ExecuteAsmCode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteAssembly(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void ExecuteAssembly(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteAsm(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void ExecuteAsm(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteAssemblyBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void ExecuteAssemblyString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteAsmBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void ExecuteAsmString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteShellcode(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteShell(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void ExecuteShellcodeString(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void ExecuteShellcodeBytes(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, method);
+        }
+
+        public void ExecuteShell(string asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            try
+            {
+                InjectAssemblyCode(ConvertStringToBytes(asm), method);
+            }
+            catch
+            {
+                InjectAssemblyCode(CompileAsm(asm), method);
+            }
+        }
+
+        public void InjectAssemblyCode(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            if (method.Equals(AssemblyInjectionMethod.ClassicCreateThread))
+            {
+                IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)asm.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
+                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, 0);
+                CreateRemoteThread(ProcessHandle, IntPtr.Zero, 0, allocatedMemoryAddress, IntPtr.Zero, 0, IntPtr.Zero);
+            }
+            else if (method.Equals(AssemblyInjectionMethod.ClassicRtlCreateUserThread))
+            {
+                IntPtr remoteThread = IntPtr.Zero;
+                IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)asm.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
+                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, 0);
+                RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, allocatedMemoryAddress, IntPtr.Zero, ref remoteThread, IntPtr.Zero);
+            }
+            else if (method.Equals(AssemblyInjectionMethod.ClassicNtCreateThreadEx))
+            {
+                IntPtr remoteThread = IntPtr.Zero;
+                IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)asm.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
+                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, 0);
+                NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, allocatedMemoryAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
+            }
         }
     }
 }
