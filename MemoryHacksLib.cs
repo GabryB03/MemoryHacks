@@ -4322,6 +4322,99 @@ namespace MemoryHacks
             return UInt32.Parse(address, System.Globalization.NumberStyles.HexNumber);
         }
 
+        public uint CalculateOffsetBetweenAddresses(string address1, string address2)
+        {
+            uint pAddress1 = ParseAddress(address1), pAddress2 = ParseAddress(address2);
+
+            if (pAddress1 > pAddress2)
+            {
+                return pAddress1 - pAddress2;
+            }
+            else
+            {
+                return pAddress2 - pAddress1;
+            }
+        }
+
+        public uint CalculateOffsetBetweenAddresses(uint address1, uint address2)
+        {
+            if (address1 > address2)
+            {
+                return address1 - address2;
+            }
+            else
+            {
+                return address2 - address1;
+            }
+        }
+
+        public uint CalculateOffsetBetweenAddresses(IntPtr address1, IntPtr address2)
+        {
+            return CalculateOffsetBetweenAddresses((uint)address1, (uint)address2);
+        }
+
+        public uint CalculateOffset(string address1, string address2)
+        {
+            uint pAddress1 = ParseAddress(address1), pAddress2 = ParseAddress(address2);
+
+            if (pAddress1 > pAddress2)
+            {
+                return pAddress1 - pAddress2;
+            }
+            else
+            {
+                return pAddress2 - pAddress1;
+            }
+        }
+
+        public uint CalculateOffset(uint address1, uint address2)
+        {
+            if (address1 > address2)
+            {
+                return address1 - address2;
+            }
+            else
+            {
+                return address2 - address1;
+            }
+        }
+
+        public uint CalculateOffset(IntPtr address1, IntPtr address2)
+        {
+            return CalculateOffset((uint)address1, (uint)address2);
+        }
+
+        public uint GetOffset(string address1, string address2)
+        {
+            uint pAddress1 = ParseAddress(address1), pAddress2 = ParseAddress(address2);
+
+            if (pAddress1 > pAddress2)
+            {
+                return pAddress1 - pAddress2;
+            }
+            else
+            {
+                return pAddress2 - pAddress1;
+            }
+        }
+
+        public uint GetOffset(uint address1, uint address2)
+        {
+            if (address1 > address2)
+            {
+                return address1 - address2;
+            }
+            else
+            {
+                return address2 - address1;
+            }
+        }
+
+        public uint GetOffset(IntPtr address1, IntPtr address2)
+        {
+            return GetOffset((uint)address1, (uint)address2);
+        }
+
         public uint GetAddressFromPointerScan(uint baseAddress, uint[] offsets)
         {
             uint newBaseAddress = ReadUInt32((uint)BaseAddress + baseAddress);
