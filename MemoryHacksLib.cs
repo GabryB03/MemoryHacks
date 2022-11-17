@@ -69,22 +69,32 @@ namespace MemoryHacks
         [DllImport("ntdll.dll", SetLastError = true)]
         private static extern IntPtr NtCreateThreadEx(ref IntPtr threadHandle, UInt32 desiredAccess, IntPtr objectAttributes, IntPtr processHandle, IntPtr startAddress, IntPtr parameter, bool inCreateSuspended, Int32 stackZeroBits, Int32 sizeOfStack, Int32 maximumStackSize, IntPtr attributeList);
 
+        [DllImport("ntdll.dll", SetLastError = true)]
+        private static extern IntPtr ZwCreateThreadEx(ref IntPtr threadHandle, UInt32 desiredAccess, IntPtr objectAttributes, IntPtr processHandle, IntPtr startAddress, IntPtr parameter, bool inCreateSuspended, Int32 stackZeroBits, Int32 sizeOfStack, Int32 maximumStackSize, IntPtr attributeList);
+
         private delegate bool EnumThreadDelegate(IntPtr hWnd, IntPtr lParam);
 
         [DllImport("user32.dll")]
         private static extern bool EnumThreadWindows(int dwThreadId, EnumThreadDelegate lpfn, IntPtr lParam);
 
-        [DllImport("kernel32.dll", SetLastError = true, CallingConvention = CallingConvention.Winapi)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool IsWow64Process([In] IntPtr process, [Out] out bool wow64Process);
+        [DllImport("ntdll.dll", SetLastError = true)]
+        private static extern IntPtr NtWriteVirtualMemory(IntPtr ProcessHandle, IntPtr BaseAddress, byte[] Buffer, UInt32 NumberOfBytesToWrite, ref UInt32 NumberOfBytesWritten);
 
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr QueueUserAPC(IntPtr pfnAPC, IntPtr hThread, IntPtr dwData);
+        [DllImport("ntdll.dll", SetLastError = true)]
+        private static extern IntPtr NtReadVirtualMemory(IntPtr ProcessHandle, IntPtr BaseAddress, byte[] Buffer, UInt32 NumberOfBytesToRead, ref IntPtr NumberOfBytesRead);
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        private static extern IntPtr ZwWriteVirtualMemory(IntPtr ProcessHandle, IntPtr BaseAddress, byte[] Buffer, UInt32 NumberOfBytesToWrite, ref UInt32 NumberOfBytesWritten);
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        private static extern IntPtr ZwReadVirtualMemory(IntPtr ProcessHandle, IntPtr BaseAddress, byte[] Buffer, UInt32 NumberOfBytesToRead, ref IntPtr NumberOfBytesRead);
 
         public int ProcessId { get; private set; }
         public IntPtr ProcessHandle { get; private set; }
         public Process DiagnosticsProcess { get; private set; }
         public IntPtr BaseAddress { get; private set; }
+        public MemoryMethod WriteMethod { get; set; }
+        public MemoryMethod ReadMethod { get; set; }
 
         private int PROCESS_CREATE_THREAD = 0x0002;
         private int PROCESS_QUERY_INFORMATION = 0x0400;
@@ -132,6 +142,8 @@ namespace MemoryHacks
             }
 
             ProcessId = processId;
+            ReadMethod = MemoryMethod.KERNEL32;
+            WriteMethod = MemoryMethod.KERNEL32;
         }
 
         public MemoryHacksLib(string processName)
@@ -156,6 +168,8 @@ namespace MemoryHacks
             }
 
             ProcessId = processId;
+            ReadMethod = MemoryMethod.KERNEL32;
+            WriteMethod = MemoryMethod.KERNEL32;
         }
 
         public ModuleInfo GetModuleInformations(string moduleName)
@@ -176,6 +190,31 @@ namespace MemoryHacks
             }
 
             throw new Exception("Could not find the informations of the specified module.");
+        }
+
+        public void SetMemoryMethod(MemoryMethod memoryMethod)
+        {
+            ReadMethod = memoryMethod;
+            WriteMethod = memoryMethod;
+        }
+
+        public void SetReadMethod(MemoryMethod memoryMethod)
+        {
+            ReadMethod = memoryMethod;
+        }
+        public void SetWriteMethod(MemoryMethod memoryMethod)
+        {
+            WriteMethod = memoryMethod;
+        }
+
+        public void SetReadAndWriteMethod(MemoryMethod memoryMethod)
+        {
+            SetMemoryMethod(memoryMethod);
+        }
+
+        public void SetWriteAndReadMethod(MemoryMethod memoryMethod)
+        {
+            SetMemoryMethod(memoryMethod);
         }
 
         public ModuleInfo GetModule(string moduleName)
@@ -218,7 +257,20 @@ namespace MemoryHacks
             {
                 byte[] result = new byte[size];
                 IntPtr bytesRead = IntPtr.Zero;
-                ReadProcessMemory(ProcessHandle, offset, result, size, out bytesRead);
+
+                if (ReadMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    ReadProcessMemory(ProcessHandle, offset, result, size, out bytesRead);
+                }
+                else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                {
+                    NtReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
+                }
+                else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                {
+                    ZwReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
+                }
+
                 return result;
             }
             catch (Exception ex)
@@ -1136,9 +1188,22 @@ namespace MemoryHacks
             {
                 byte[] result = new byte[size];
                 uint newProtect = 0;
-                IntPtr bytesRead;
+                IntPtr bytesRead = IntPtr.Zero;
                 VirtualProtectEx(ProcessHandle, offset, (UIntPtr)size, 64, out newProtect);
-                ReadProcessMemory(ProcessHandle, offset, result, size, out bytesRead);
+                
+                if (ReadMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    ReadProcessMemory(ProcessHandle, offset, result, size, out bytesRead);
+                }
+                else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                {
+                    NtReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
+                }
+                else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                {
+                    ZwReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
+                }
+
                 VirtualProtectEx(ProcessHandle, offset, (UIntPtr)size, newProtect, out newProtect);
                 return result;
             }
@@ -2055,7 +2120,22 @@ namespace MemoryHacks
         {
             try
             {
-                return WriteProcessMemory(ProcessHandle, offset, data, (uint)data.Length, 0);
+                if (WriteMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    return WriteProcessMemory(ProcessHandle, offset, data, (uint)data.Length, 0);
+                }
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL1))
+                {
+                    uint bytesWritten = 0;
+                    NtWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);
+                }
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL2))
+                {
+                    uint bytesWritten = 0;
+                    ZwWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);
+                }
+
+                return true;
             }
             catch (Exception ex)
             {
@@ -3021,11 +3101,25 @@ namespace MemoryHacks
             try
             {
                 uint newProtect = 0;
-                bool isWritten = false;
                 VirtualProtectEx(ProcessHandle, offset, (UIntPtr)data.Length, 64, out newProtect);
-                isWritten = WriteProcessMemory(ProcessHandle, offset, data, (uint)data.Length, 0);
+                
+                if (WriteMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    WriteProcessMemory(ProcessHandle, offset, data, (uint)data.Length, 0);
+                }
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL1))
+                {
+                    uint bytesWritten = 0;
+                    NtWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);
+                }
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL2))
+                {
+                    uint bytesWritten = 0;
+                    ZwWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);
+                }
+
                 VirtualProtectEx(ProcessHandle, offset, (UIntPtr)data.Length, newProtect, out newProtect);
-                return isWritten;
+                return true;
             }
             catch (Exception ex)
             {
@@ -3990,7 +4084,21 @@ namespace MemoryHacks
                 }
 
                 IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), 0);
+                
+                if (WriteMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), 0);
+                }
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL1))
+                {
+                    uint bytesWritten = 0;
+                    NtWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), ref bytesWritten);
+                }
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL2))
+                {
+                    uint bytesWritten = 0;
+                    ZwWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), ref bytesWritten);
+                }
 
                 switch (threadFunction)
                 {
@@ -4002,6 +4110,9 @@ namespace MemoryHacks
                         break;
                     case CreateThreadFunction.NtCreateThreadEx:
                         NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, loadLibraryAddress, allocatedMemoryAddress, false, 0, 0, 0, IntPtr.Zero);
+                        break;
+                    case CreateThreadFunction.ZwCreateThreadEx:
+                        ZwCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, loadLibraryAddress, allocatedMemoryAddress, false, 0, 0, 0, IntPtr.Zero);
                         break;
                 }
             }
@@ -4577,28 +4688,38 @@ namespace MemoryHacks
 
                     uint moduleSize = (uint)DiagnosticsProcess.MainModule.ModuleMemorySize;
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
-                    if (ReadProcessMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, out numBytes))
+                    if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                     {
-                        for (int i = 0; i < moduleSize; i++)
+                        ReadProcessMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, out numBytes);
+                    }
+                    else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                    {
+                        NtReadVirtualMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, ref numBytes);
+                    }
+                    else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                    {
+                        ZwReadVirtualMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, ref numBytes);
+                    }
+
+                    for (int i = 0; i < moduleSize; i++)
+                    {
+                        bool found = true;
+
+                        for (int l = 0; l < mask.Length; l++)
                         {
-                            bool found = true;
+                            found = mask[l] == '?' || moduleBytes[l + i] == pattern[l];
 
-                            for (int l = 0; l < mask.Length; l++)
+                            if (!found)
                             {
-                                found = mask[l] == '?' || moduleBytes[l + i] == pattern[l];
-
-                                if (!found)
-                                {
-                                    break;
-                                }
+                                break;
                             }
+                        }
 
-                            if (found)
-                            {
-                                return (uint)i + offset;
-                            }
+                        if (found)
+                        {
+                            return (uint)i + offset;
                         }
                     }
                 }
@@ -4607,28 +4728,38 @@ namespace MemoryHacks
                     ModuleInfo moduleInfo = GetModuleInformations(module);
                     uint moduleSize = moduleInfo.MemorySize;
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
-                    if (ReadProcessMemory(ProcessHandle, moduleInfo.BaseAddress, moduleBytes, moduleSize, out numBytes))
+                    if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                     {
-                        for (int i = 0; i < moduleSize; i++)
+                        ReadProcessMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, out numBytes);
+                    }
+                    else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                    {
+                        NtReadVirtualMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, ref numBytes);
+                    }
+                    else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                    {
+                        ZwReadVirtualMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, ref numBytes);
+                    }
+
+                    for (int i = 0; i < moduleSize; i++)
+                    {
+                        bool found = true;
+
+                        for (int l = 0; l < mask.Length; l++)
                         {
-                            bool found = true;
+                            found = mask[l] == '?' || moduleBytes[l + i] == pattern[l];
 
-                            for (int l = 0; l < mask.Length; l++)
+                            if (!found)
                             {
-                                found = mask[l] == '?' || moduleBytes[l + i] == pattern[l];
-
-                                if (!found)
-                                {
-                                    break;
-                                }
+                                break;
                             }
+                        }
 
-                            if (found)
-                            {
-                                return (uint)i + offset;
-                            }
+                        if (found)
+                        {
+                            return (uint)i + offset;
                         }
                     }
                 }
@@ -5843,6 +5974,9 @@ namespace MemoryHacks
                     case CreateThreadFunction.NtCreateThreadEx:
                         NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleBaseAddress, false, 0, 0, 0, IntPtr.Zero);
                         break;
+                    case CreateThreadFunction.ZwCreateThreadEx:
+                        ZwCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleBaseAddress, false, 0, 0, 0, IntPtr.Zero);
+                        break;
                 }
             }
             catch (Exception ex)
@@ -5867,6 +6001,9 @@ namespace MemoryHacks
                         RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, freeLibraryAddress, moduleAddress, ref remoteThread, IntPtr.Zero);
                         break;
                     case CreateThreadFunction.NtCreateThreadEx:
+                        NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleAddress, false, 0, 0, 0, IntPtr.Zero);
+                        break;
+                    case CreateThreadFunction.ZwCreateThreadEx:
                         NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleAddress, false, 0, 0, 0, IntPtr.Zero);
                         break;
                 }
@@ -6099,28 +6236,38 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
                             {
-                                try
-                                {
-                                    byte[] theBytes = new byte[4] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3] };
-                                    int newValue = BitConverter.ToInt32(theBytes, 0);
+                                byte[] theBytes = new byte[4] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3] };
+                                int newValue = BitConverter.ToInt32(theBytes, 0);
 
-                                    if (newValue == value)
-                                    {
-                                        values.Add(new ScanValueInt32((IntPtr)i, newValue, moduleName));
-                                    }
-                                }
-                                catch
+                                if (newValue == value)
                                 {
-
+                                    values.Add(new ScanValueInt32((IntPtr)i, newValue, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -6165,28 +6312,38 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
                             {
-                                try
-                                {
-                                    byte[] theBytes = new byte[2] { moduleBytes[i], moduleBytes[i + 1] };
-                                    short newValue = BitConverter.ToInt16(theBytes, 0);
+                                byte[] theBytes = new byte[2] { moduleBytes[i], moduleBytes[i + 1] };
+                                short newValue = BitConverter.ToInt16(theBytes, 0);
 
-                                    if (newValue == value)
-                                    {
-                                        values.Add(new ScanValueInt16((IntPtr)i, newValue, moduleName));
-                                    }
-                                }
-                                catch
+                                if (newValue == value)
                                 {
-
+                                    values.Add(new ScanValueInt16((IntPtr)i, newValue, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -6231,28 +6388,38 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
                             {
-                                try
-                                {
-                                    byte[] theBytes = new byte[8] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3], moduleBytes[i + 4], moduleBytes[i + 5], moduleBytes[i + 6], moduleBytes[i + 7] };
-                                    long newValue = BitConverter.ToInt64(theBytes, 0);
+                                byte[] theBytes = new byte[8] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3], moduleBytes[i + 4], moduleBytes[i + 5], moduleBytes[i + 6], moduleBytes[i + 7] };
+                                long newValue = BitConverter.ToInt64(theBytes, 0);
 
-                                    if (newValue == value)
-                                    {
-                                        values.Add(new ScanValueInt64((IntPtr)i, newValue, moduleName));
-                                    }
-                                }
-                                catch
+                                if (newValue == value)
                                 {
-
+                                    values.Add(new ScanValueInt64((IntPtr)i, newValue, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -6297,28 +6464,38 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
                             {
-                                try
-                                {
-                                    byte[] theBytes = new byte[4] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3] };
-                                    uint newValue = BitConverter.ToUInt32(theBytes, 0);
+                                byte[] theBytes = new byte[4] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3] };
+                                uint newValue = BitConverter.ToUInt32(theBytes, 0);
 
-                                    if (newValue == value)
-                                    {
-                                        values.Add(new ScanValueUInt32((IntPtr)i, newValue, moduleName));
-                                    }
-                                }
-                                catch
+                                if (newValue == value)
                                 {
-
+                                    values.Add(new ScanValueUInt32((IntPtr)i, newValue, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -6373,28 +6550,38 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
                             {
-                                try
-                                {
-                                    byte[] theBytes = new byte[2] { moduleBytes[i], moduleBytes[i + 1] };
-                                    ushort newValue = BitConverter.ToUInt16(theBytes, 0);
+                                byte[] theBytes = new byte[2] { moduleBytes[i], moduleBytes[i + 1] };
+                                ushort newValue = BitConverter.ToUInt16(theBytes, 0);
 
-                                    if (newValue == value)
-                                    {
-                                        values.Add(new ScanValueUInt16((IntPtr)i, newValue, moduleName));
-                                    }
-                                }
-                                catch
+                                if (newValue == value)
                                 {
-
+                                    values.Add(new ScanValueUInt16((IntPtr)i, newValue, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -6449,28 +6636,38 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
                             {
-                                try
-                                {
-                                    byte[] theBytes = new byte[8] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3], moduleBytes[i + 4], moduleBytes[i + 5], moduleBytes[i + 6], moduleBytes[i + 7] };
-                                    ulong newValue = BitConverter.ToUInt64(theBytes, 0);
+                                byte[] theBytes = new byte[8] { moduleBytes[i], moduleBytes[i + 1], moduleBytes[i + 2], moduleBytes[i + 3], moduleBytes[i + 4], moduleBytes[i + 5], moduleBytes[i + 6], moduleBytes[i + 7] };
+                                ulong newValue = BitConverter.ToUInt64(theBytes, 0);
 
-                                    if (newValue == value)
-                                    {
-                                        values.Add(new ScanValueUInt64((IntPtr)i, newValue, moduleName));
-                                    }
-                                }
-                                catch
+                                if (newValue == value)
                                 {
-
+                                    values.Add(new ScanValueUInt64((IntPtr)i, newValue, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -6525,25 +6722,35 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
-                            {
-                                try
-                                {
-                                    if (value == moduleBytes[i])
-                                    {
-                                        values.Add(new ScanValueByte((IntPtr)i, value, moduleName));
-                                    }
-                                }
-                                catch
-                                {
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
 
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
+                            {
+                                if (value == moduleBytes[i])
+                                {
+                                    values.Add(new ScanValueByte((IntPtr)i, value, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -6605,27 +6812,37 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
                             {
-                                try
-                                {
-                                    byte[] newValue = moduleBytes.Skip(i).Take(value.Length).ToArray();
+                                byte[] newValue = moduleBytes.Skip(i).Take(value.Length).ToArray();
 
-                                    if (CompareByteArrays(newValue, value))
-                                    {
-                                        values.Add(new ScanValueByteArray((IntPtr)i, value, moduleName));
-                                    }
-                                }
-                                catch
+                                if (CompareByteArrays(newValue, value))
                                 {
-
+                                    values.Add(new ScanValueByteArray((IntPtr)i, value, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -6665,28 +6882,38 @@ namespace MemoryHacks
                     }
 
                     byte[] moduleBytes = new byte[moduleSize];
-                    IntPtr numBytes;
+                    IntPtr numBytes = IntPtr.Zero;
                     byte[] bytesValue = encoding.GetBytes(value);
 
                     try
                     {
-                        if (ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes))
+                        if (ReadMethod.Equals(MemoryMethod.KERNEL32))
                         {
-                            for (int i = 0; i < moduleSize; i++)
-                            {
-                                try
-                                {
-                                    byte[] newValue = moduleBytes.Skip(i).Take(bytesValue.Length).ToArray();
-                                   
-                                    if (CompareByteArrays(newValue, bytesValue))
-                                    {
-                                        values.Add(new ScanValueString((IntPtr)i, value, moduleName));
-                                    }
-                                }
-                                catch
-                                {
+                            ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        {
+                            NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
+                        {
+                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
+                        }
 
+                        for (int i = 0; i < moduleSize; i++)
+                        {
+                            try
+                            {
+                                byte[] newValue = moduleBytes.Skip(i).Take(bytesValue.Length).ToArray();
+
+                                if (CompareByteArrays(newValue, bytesValue))
+                                {
+                                    values.Add(new ScanValueString((IntPtr)i, value, moduleName));
                                 }
+                            }
+                            catch
+                            {
+
                             }
                         }
                     }
@@ -7577,25 +7804,39 @@ namespace MemoryHacks
 
         public void InjectAssemblyCode(byte[] asm, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
         {
-            if (method.Equals(AssemblyInjectionMethod.ClassicCreateThread))
+            IntPtr remoteThread = IntPtr.Zero;
+            IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)asm.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
+            
+            if (WriteMethod.Equals(MemoryMethod.KERNEL32))
             {
-                IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)asm.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
                 WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, 0);
+            }
+            else if (WriteMethod.Equals(MemoryMethod.NTDLL1))
+            {
+                uint bytesWritten = 0;
+                NtWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, ref bytesWritten);
+            }
+            else if (WriteMethod.Equals(MemoryMethod.NTDLL2))
+            {
+                uint bytesWritten = 0;
+                ZwWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, ref bytesWritten);
+            }
+
+            if (method.Equals(AssemblyInjectionMethod.ClassicCreateThread))
+            {            
                 CreateRemoteThread(ProcessHandle, IntPtr.Zero, 0, allocatedMemoryAddress, IntPtr.Zero, 0, IntPtr.Zero);
             }
             else if (method.Equals(AssemblyInjectionMethod.ClassicRtlCreateUserThread))
             {
-                IntPtr remoteThread = IntPtr.Zero;
-                IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)asm.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
-                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, 0);
                 RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, allocatedMemoryAddress, IntPtr.Zero, ref remoteThread, IntPtr.Zero);
             }
             else if (method.Equals(AssemblyInjectionMethod.ClassicNtCreateThreadEx))
             {
-                IntPtr remoteThread = IntPtr.Zero;
-                IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)asm.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
-                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, 0);
                 NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, allocatedMemoryAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
+            }
+            else if (method.Equals(AssemblyInjectionMethod.ClassicZwCreateThreadEx))
+            {
+                ZwCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, allocatedMemoryAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
             }
         }
     }

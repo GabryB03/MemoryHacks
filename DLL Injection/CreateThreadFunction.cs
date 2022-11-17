@@ -4,6 +4,7 @@
     {
         CreateRemoteThread,
         RtlCreateUserThread,
-        NtCreateThreadEx
+        NtCreateThreadEx,
+        ZwCreateThreadEx
     }
 }

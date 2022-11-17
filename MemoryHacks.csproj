@@ -71,6 +71,7 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
+    <Compile Include="Utils\MemoryMethod.cs" />
     <Compile Include="Utils\ProtoRandom.cs" />
     <Compile Include="Process Info\WindowInfo.cs" />
   </ItemGroup>
