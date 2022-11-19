@@ -10,6 +10,7 @@ using System.Security;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Net.NetworkInformation;
 
 namespace MemoryHacks
 {
@@ -84,10 +85,7 @@ namespace MemoryHacks
         private static extern IntPtr NtReadVirtualMemory(IntPtr ProcessHandle, IntPtr BaseAddress, byte[] Buffer, UInt32 NumberOfBytesToRead, ref IntPtr NumberOfBytesRead);
 
         [DllImport("ntdll.dll", SetLastError = true)]
-        private static extern IntPtr ZwWriteVirtualMemory(IntPtr ProcessHandle, IntPtr BaseAddress, byte[] Buffer, UInt32 NumberOfBytesToWrite, ref UInt32 NumberOfBytesWritten);
-
-        [DllImport("ntdll.dll", SetLastError = true)]
-        private static extern IntPtr ZwReadVirtualMemory(IntPtr ProcessHandle, IntPtr BaseAddress, byte[] Buffer, UInt32 NumberOfBytesToRead, ref IntPtr NumberOfBytesRead);
+        private static extern IntPtr NtProtectVirtualMemory(IntPtr ProcessHandle, ref IntPtr BaseAddress, ref UInt32 NumberOfBytesToProtect, UInt32 NewAccessProtection, ref UInt32 OldAccessProtection);
 
         public int ProcessId { get; private set; }
         public IntPtr ProcessHandle { get; private set; }
@@ -95,6 +93,7 @@ namespace MemoryHacks
         public IntPtr BaseAddress { get; private set; }
         public MemoryMethod WriteMethod { get; set; }
         public MemoryMethod ReadMethod { get; set; }
+        public MemoryMethod ProtectMethod { get; set; }
 
         private int PROCESS_CREATE_THREAD = 0x0002;
         private int PROCESS_QUERY_INFORMATION = 0x0400;
@@ -196,25 +195,7 @@ namespace MemoryHacks
         {
             ReadMethod = memoryMethod;
             WriteMethod = memoryMethod;
-        }
-
-        public void SetReadMethod(MemoryMethod memoryMethod)
-        {
-            ReadMethod = memoryMethod;
-        }
-        public void SetWriteMethod(MemoryMethod memoryMethod)
-        {
-            WriteMethod = memoryMethod;
-        }
-
-        public void SetReadAndWriteMethod(MemoryMethod memoryMethod)
-        {
-            SetMemoryMethod(memoryMethod);
-        }
-
-        public void SetWriteAndReadMethod(MemoryMethod memoryMethod)
-        {
-            SetMemoryMethod(memoryMethod);
+            ProtectMethod = memoryMethod;
         }
 
         public ModuleInfo GetModule(string moduleName)
@@ -262,13 +243,9 @@ namespace MemoryHacks
                 {
                     ReadProcessMemory(ProcessHandle, offset, result, size, out bytesRead);
                 }
-                else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                 {
                     NtReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
-                }
-                else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
-                {
-                    ZwReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
                 }
 
                 return result;
@@ -1189,22 +1166,40 @@ namespace MemoryHacks
                 byte[] result = new byte[size];
                 uint newProtect = 0;
                 IntPtr bytesRead = IntPtr.Zero;
-                VirtualProtectEx(ProcessHandle, offset, (UIntPtr)size, 64, out newProtect);
-                
-                if (ReadMethod.Equals(MemoryMethod.KERNEL32))
+
+                if (ProtectMethod.Equals(MemoryMethod.KERNEL32))
                 {
-                    ReadProcessMemory(ProcessHandle, offset, result, size, out bytesRead);
+                    VirtualProtectEx(ProcessHandle, offset, (UIntPtr)size, 64, out newProtect);
                 }
-                else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                else if (ProtectMethod.Equals(MemoryMethod.NTDLL))
                 {
-                    NtReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
-                }
-                else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                {
-                    ZwReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
+                    IntPtr theOffset = offset;
+                    uint numberBytes = size;
+                    NtProtectVirtualMemory(ProcessHandle, ref theOffset, ref numberBytes, 64, ref newProtect);
                 }
 
-                VirtualProtectEx(ProcessHandle, offset, (UIntPtr)size, newProtect, out newProtect);
+                if (ReadMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    ReadProcessMemory(ProcessHandle, offset, result, size, out bytesRead);             
+                }
+                else if (ReadMethod.Equals(MemoryMethod.NTDLL))
+                {
+                    IntPtr theOffset = offset;
+                    uint numberBytes = size;
+                    NtReadVirtualMemory(ProcessHandle, offset, result, size, ref bytesRead);
+                }
+
+                if (ProtectMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    VirtualProtectEx(ProcessHandle, offset, (UIntPtr)size, newProtect, out newProtect);
+                }
+                else if (ProtectMethod.Equals(MemoryMethod.NTDLL))
+                {
+                    IntPtr theOffset = offset;
+                    uint numberBytes = size;
+                    NtProtectVirtualMemory(ProcessHandle, ref offset, ref numberBytes, newProtect, ref newProtect);
+                }
+
                 return result;
             }
             catch (Exception ex)
@@ -2124,15 +2119,10 @@ namespace MemoryHacks
                 {
                     return WriteProcessMemory(ProcessHandle, offset, data, (uint)data.Length, 0);
                 }
-                else if (WriteMethod.Equals(MemoryMethod.NTDLL1))
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL))
                 {
                     uint bytesWritten = 0;
                     NtWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);
-                }
-                else if (WriteMethod.Equals(MemoryMethod.NTDLL2))
-                {
-                    uint bytesWritten = 0;
-                    ZwWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);
                 }
 
                 return true;
@@ -3101,24 +3091,39 @@ namespace MemoryHacks
             try
             {
                 uint newProtect = 0;
-                VirtualProtectEx(ProcessHandle, offset, (UIntPtr)data.Length, 64, out newProtect);
+
+                if (ProtectMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    VirtualProtectEx(ProcessHandle, offset, (UIntPtr)data.Length, 64, out newProtect);
+                }
+                else if (ProtectMethod.Equals(MemoryMethod.NTDLL))
+                {
+                    IntPtr theOffset = offset;
+                    uint theThing = (uint)data.Length;
+                    NtProtectVirtualMemory(ProcessHandle, ref theOffset, ref theThing, 64, ref newProtect);
+                }
                 
                 if (WriteMethod.Equals(MemoryMethod.KERNEL32))
                 {
-                    WriteProcessMemory(ProcessHandle, offset, data, (uint)data.Length, 0);
+                    WriteProcessMemory(ProcessHandle, offset, data, (uint)data.Length, 0);                 
                 }
-                else if (WriteMethod.Equals(MemoryMethod.NTDLL1))
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL))
                 {
                     uint bytesWritten = 0;
-                    NtWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);
-                }
-                else if (WriteMethod.Equals(MemoryMethod.NTDLL2))
-                {
-                    uint bytesWritten = 0;
-                    ZwWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);
+                    NtWriteVirtualMemory(ProcessHandle, offset, data, (uint)data.Length, ref bytesWritten);       
                 }
 
-                VirtualProtectEx(ProcessHandle, offset, (UIntPtr)data.Length, newProtect, out newProtect);
+                if (ProtectMethod.Equals(MemoryMethod.KERNEL32))
+                {
+                    VirtualProtectEx(ProcessHandle, offset, (UIntPtr)data.Length, newProtect, out newProtect);
+                }
+                else if (ProtectMethod.Equals(MemoryMethod.NTDLL))
+                {
+                    IntPtr theOffset = offset;
+                    uint theThing = (uint)data.Length;
+                    NtProtectVirtualMemory(ProcessHandle, ref theOffset, ref theThing, newProtect, ref newProtect);
+                }
+
                 return true;
             }
             catch (Exception ex)
@@ -4086,18 +4091,13 @@ namespace MemoryHacks
                 IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
                 
                 if (WriteMethod.Equals(MemoryMethod.KERNEL32))
-                {
+                {;
                     WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), 0);
                 }
-                else if (WriteMethod.Equals(MemoryMethod.NTDLL1))
+                else if (WriteMethod.Equals(MemoryMethod.NTDLL))
                 {
                     uint bytesWritten = 0;
                     NtWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), ref bytesWritten);
-                }
-                else if (WriteMethod.Equals(MemoryMethod.NTDLL2))
-                {
-                    uint bytesWritten = 0;
-                    ZwWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, Encoding.Default.GetBytes(pathToModule), (uint)((pathToModule.Length + 1) * Marshal.SizeOf(typeof(char))), ref bytesWritten);
                 }
 
                 switch (threadFunction)
@@ -4694,13 +4694,9 @@ namespace MemoryHacks
                     {
                         ReadProcessMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, out numBytes);
                     }
-                    else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                    else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                     {
                         NtReadVirtualMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, ref numBytes);
-                    }
-                    else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                    {
-                        ZwReadVirtualMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, ref numBytes);
                     }
 
                     for (int i = 0; i < moduleSize; i++)
@@ -4734,13 +4730,9 @@ namespace MemoryHacks
                     {
                         ReadProcessMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, out numBytes);
                     }
-                    else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                    else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                     {
                         NtReadVirtualMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, ref numBytes);
-                    }
-                    else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                    {
-                        ZwReadVirtualMemory(ProcessHandle, BaseAddress, moduleBytes, moduleSize, ref numBytes);
                     }
 
                     for (int i = 0; i < moduleSize; i++)
@@ -6244,13 +6236,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -6320,13 +6308,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -6396,13 +6380,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -6472,13 +6452,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -6558,13 +6534,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -6644,13 +6616,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -6730,13 +6698,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -6820,13 +6784,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -6891,13 +6851,9 @@ namespace MemoryHacks
                         {
                             ReadProcessMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, out numBytes);
                         }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL1))
+                        else if (ReadMethod.Equals(MemoryMethod.NTDLL))
                         {
                             NtReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
-                        }
-                        else if (ReadMethod.Equals(MemoryMethod.NTDLL2))
-                        {
-                            ZwReadVirtualMemory(ProcessHandle, moduleBaseAddress, moduleBytes, moduleSize, ref numBytes);
                         }
 
                         for (int i = 0; i < moduleSize; i++)
@@ -7811,15 +7767,10 @@ namespace MemoryHacks
             {
                 WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, 0);
             }
-            else if (WriteMethod.Equals(MemoryMethod.NTDLL1))
+            else if (WriteMethod.Equals(MemoryMethod.NTDLL))
             {
                 uint bytesWritten = 0;
                 NtWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, ref bytesWritten);
-            }
-            else if (WriteMethod.Equals(MemoryMethod.NTDLL2))
-            {
-                uint bytesWritten = 0;
-                ZwWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, asm, (uint)asm.Length, ref bytesWritten);
             }
 
             if (method.Equals(AssemblyInjectionMethod.ClassicCreateThread))
