@@ -2,6 +2,5 @@
 {
     ClassicCreateThread,
     ClassicRtlCreateUserThread,
-    ClassicNtCreateThreadEx,
-    ClassicZwCreateThreadEx
+    ClassicNtCreateThreadEx
 }

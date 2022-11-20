@@ -10,7 +10,6 @@ using System.Security;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
-using System.Net.NetworkInformation;
 
 namespace MemoryHacks
 {
@@ -95,12 +94,6 @@ namespace MemoryHacks
         public MemoryMethod ReadMethod { get; set; }
         public MemoryMethod ProtectMethod { get; set; }
 
-        private int PROCESS_CREATE_THREAD = 0x0002;
-        private int PROCESS_QUERY_INFORMATION = 0x0400;
-        private int PROCESS_VM_OPERATION = 0x0008;
-        private int PROCESS_VM_WRITE = 0x0020;
-        private int PROCESS_VM_READ = 0x0010;
-
         private uint MEM_COMMIT = 0x00001000;
         private uint MEM_RESERVE = 0x00002000;
         private uint PAGE_READWRITE = 4;
@@ -143,6 +136,7 @@ namespace MemoryHacks
             ProcessId = processId;
             ReadMethod = MemoryMethod.KERNEL32;
             WriteMethod = MemoryMethod.KERNEL32;
+            ProtectMethod = MemoryMethod.NTDLL;
         }
 
         public MemoryHacksLib(string processName)
@@ -169,6 +163,7 @@ namespace MemoryHacks
             ProcessId = processId;
             ReadMethod = MemoryMethod.KERNEL32;
             WriteMethod = MemoryMethod.KERNEL32;
+            ProtectMethod = MemoryMethod.NTDLL;
         }
 
         public ModuleInfo GetModuleInformations(string moduleName)
@@ -4111,9 +4106,6 @@ namespace MemoryHacks
                     case CreateThreadFunction.NtCreateThreadEx:
                         NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, loadLibraryAddress, allocatedMemoryAddress, false, 0, 0, 0, IntPtr.Zero);
                         break;
-                    case CreateThreadFunction.ZwCreateThreadEx:
-                        ZwCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, loadLibraryAddress, allocatedMemoryAddress, false, 0, 0, 0, IntPtr.Zero);
-                        break;
                 }
             }
             catch (Exception ex)
@@ -5966,9 +5958,6 @@ namespace MemoryHacks
                     case CreateThreadFunction.NtCreateThreadEx:
                         NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleBaseAddress, false, 0, 0, 0, IntPtr.Zero);
                         break;
-                    case CreateThreadFunction.ZwCreateThreadEx:
-                        ZwCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleBaseAddress, false, 0, 0, 0, IntPtr.Zero);
-                        break;
                 }
             }
             catch (Exception ex)
@@ -5993,9 +5982,6 @@ namespace MemoryHacks
                         RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, freeLibraryAddress, moduleAddress, ref remoteThread, IntPtr.Zero);
                         break;
                     case CreateThreadFunction.NtCreateThreadEx:
-                        NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleAddress, false, 0, 0, 0, IntPtr.Zero);
-                        break;
-                    case CreateThreadFunction.ZwCreateThreadEx:
                         NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, freeLibraryAddress, moduleAddress, false, 0, 0, 0, IntPtr.Zero);
                         break;
                 }
@@ -7784,10 +7770,6 @@ namespace MemoryHacks
             else if (method.Equals(AssemblyInjectionMethod.ClassicNtCreateThreadEx))
             {
                 NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, allocatedMemoryAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
-            }
-            else if (method.Equals(AssemblyInjectionMethod.ClassicZwCreateThreadEx))
-            {
-                ZwCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, allocatedMemoryAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
             }
         }
     }
