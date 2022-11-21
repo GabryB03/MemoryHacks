@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -32,14 +33,176 @@ namespace MemoryHacks
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
 
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
         private struct WINDOWPLACEMENT
         {
             public int length;
             public int flags;
             public int showCmd;
-            public System.Drawing.Point ptMinPosition;
-            public System.Drawing.Point ptMaxPosition;
-            public System.Drawing.Rectangle rcNormalPosition;
+            public Point ptMinPosition;
+            public Point ptMaxPosition;
+            public Rectangle rcNormalPosition;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+
+        public int X
+        {
+            get
+            {
+                RECT rect;
+                GetWindowRect(WindowHandle, out rect);
+                return rect.Left;
+            }
+
+            set
+            {
+                RECT rect;
+                GetWindowRect(WindowHandle, out rect);
+                int Y = rect.Top;
+                int Width = rect.Right - rect.Left;
+                int Height = rect.Bottom - rect.Top;
+                MoveWindow(WindowHandle, value, Y, Width, Height, true);
+            }
+        }
+
+        public int Y
+        {
+            get
+            {
+                RECT rect;
+                GetWindowRect(WindowHandle, out rect);
+                return rect.Top;
+            }
+
+            set
+            {
+                RECT rect;
+                GetWindowRect(WindowHandle, out rect);
+                int X = rect.Left;
+                int Width = rect.Right - rect.Left;
+                int Height = rect.Bottom - rect.Top;
+                MoveWindow(WindowHandle, X, value, Width, Height, true);
+            }
+        }
+
+        public int Width
+        {
+            get
+            {
+                RECT rect;
+                GetWindowRect(WindowHandle, out rect);
+                return rect.Right - rect.Left;
+            }
+
+            set
+            {
+                RECT rect;
+                GetWindowRect(WindowHandle, out rect);
+                int X = rect.Left;
+                int Y = rect.Top;
+                int Height = rect.Bottom - rect.Top;
+                MoveWindow(WindowHandle, X, Y, value, Height, true);
+            }
+        }
+
+        public int Height
+        {
+            get
+            {
+                RECT rect;
+                GetWindowRect(WindowHandle, out rect);
+                return rect.Bottom - rect.Top;
+            }
+
+            set
+            {
+                RECT rect;
+                GetWindowRect(WindowHandle, out rect);
+                int X = rect.Left;
+                int Y = rect.Top;
+                int Width = rect.Right - rect.Left;
+                MoveWindow(WindowHandle, X, Y, Width, value, true);
+            }
+        }
+
+        public Point Location
+        {
+            get
+            {
+                return new Point(X, Y);
+            }
+
+            set
+            {
+                Point thePoint = value;
+                X = thePoint.X;
+                Y = thePoint.Y;
+            }
+        }
+
+        public Size Size
+        {
+            get
+            {
+                return new Size(Width, Height);
+            }
+
+            set
+            {
+                Size theSize = value;
+                Width = theSize.Width;
+                Height = theSize.Height;
+            }
+        }
+
+        public Rectangle Rectangle
+        {
+            get
+            {
+                return new Rectangle(X, Y, Width, Height);
+            }
+
+            set
+            {
+                Rectangle theRectangle = value;
+                X = theRectangle.X;
+                Y = theRectangle.Y;
+                Width = theRectangle.Width;
+                Height = theRectangle.Height;
+            }
+        }
+
+        public string ClassName
+        {
+            get
+            {
+                int nRet = 0;
+                StringBuilder ClassName = new StringBuilder(256);
+                nRet = GetClassName(WindowHandle, ClassName, ClassName.Capacity);
+                
+                if (nRet == 0)
+                {
+                    return null;
+                }
+
+                return ClassName.ToString();
+            }
         }
 
         public IntPtr WindowHandle { get; private set; }
@@ -264,6 +427,11 @@ namespace MemoryHacks
         }
 
         public void FocusWindow()
+        {
+            SetFocusedWindow();
+        }
+
+        public void Activate()
         {
             SetFocusedWindow();
         }

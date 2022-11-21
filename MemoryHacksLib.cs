@@ -69,9 +69,6 @@ namespace MemoryHacks
         [DllImport("ntdll.dll", SetLastError = true)]
         private static extern IntPtr NtCreateThreadEx(ref IntPtr threadHandle, UInt32 desiredAccess, IntPtr objectAttributes, IntPtr processHandle, IntPtr startAddress, IntPtr parameter, bool inCreateSuspended, Int32 stackZeroBits, Int32 sizeOfStack, Int32 maximumStackSize, IntPtr attributeList);
 
-        [DllImport("ntdll.dll", SetLastError = true)]
-        private static extern IntPtr ZwCreateThreadEx(ref IntPtr threadHandle, UInt32 desiredAccess, IntPtr objectAttributes, IntPtr processHandle, IntPtr startAddress, IntPtr parameter, bool inCreateSuspended, Int32 stackZeroBits, Int32 sizeOfStack, Int32 maximumStackSize, IntPtr attributeList);
-
         private delegate bool EnumThreadDelegate(IntPtr hWnd, IntPtr lParam);
 
         [DllImport("user32.dll")]
@@ -4048,7 +4045,7 @@ namespace MemoryHacks
             WriteProtectedUnsignedLongs((IntPtr)offset, data);
         }
 
-        public void InjectModule(string pathToModule, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public ModuleInfo InjectModule(string pathToModule, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
             try
             {
@@ -4107,6 +4104,23 @@ namespace MemoryHacks
                         NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, loadLibraryAddress, allocatedMemoryAddress, false, 0, 0, 0, IntPtr.Zero);
                         break;
                 }
+
+                ModuleInfo info = null;
+
+                while (true)
+                {
+                    try
+                    {
+                        info = GetModuleInfo(Path.GetFileName(pathToModule));
+                        break;
+                    }
+                    catch
+                    {
+
+                    }
+                }
+
+                return info;
             }
             catch (Exception ex)
             {
@@ -4114,7 +4128,7 @@ namespace MemoryHacks
             }
         }
 
-        public void InjectModule(byte[] moduleBytes, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public ModuleInfo InjectModule(byte[] moduleBytes, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
             try
             {
@@ -4128,7 +4142,7 @@ namespace MemoryHacks
                 string dllFileName = rootDir + "\\Temp\\" + new ProtoRandom(5).GetRandomString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray(), new ProtoRandom(5).GetRandomInt32(6, 17)) + ".dll";
                 File.WriteAllBytes(dllFileName, moduleBytes);
                 HideFile(dllFileName);
-                InjectModule(dllFileName, loadFunction, threadFunction);
+                return InjectModule(dllFileName, loadFunction, threadFunction);
             }
             catch (Exception ex)
             {
@@ -4163,14 +4177,14 @@ namespace MemoryHacks
             proc.WaitForExit();
         }
 
-        public void InjectDLL(string pathToModule, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public ModuleInfo InjectDLL(string pathToModule, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
-            InjectModule(pathToModule, loadFunction, threadFunction);
+            return InjectModule(pathToModule, loadFunction, threadFunction);
         }
 
-        public void InjectDLL(byte[] moduleBytes, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public ModuleInfo InjectDLL(byte[] moduleBytes, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
-            InjectModule(moduleBytes, loadFunction, threadFunction);
+            return InjectModule(moduleBytes, loadFunction, threadFunction);
         }
 
         public void MapModule(string pathToModule)
@@ -4543,6 +4557,18 @@ namespace MemoryHacks
         }
 
         public uint GetAddressFromOffsets(uint baseAddress, uint[] offsets)
+        {
+            uint newBaseAddress = ReadUInt32((uint)BaseAddress + baseAddress);
+
+            for (int i = 0; i < offsets.Length - 1; i++)
+            {
+                newBaseAddress = ReadUInt32(newBaseAddress + offsets[i]);
+            }
+
+            return newBaseAddress + offsets.Last();
+        }
+
+        public uint FindDmaAddy(uint baseAddress, uint[] offsets)
         {
             uint newBaseAddress = ReadUInt32((uint)BaseAddress + baseAddress);
 
@@ -6182,14 +6208,24 @@ namespace MemoryHacks
             MapModule(moduleBytes);
         }
 
-        public void InjectLibrary(string pathToModule, LoadLibraryFunction libraryFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public ModuleInfo InjectLibrary(string pathToModule, LoadLibraryFunction libraryFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
-            InjectModule(pathToModule, libraryFunction, threadFunction);
+            return InjectModule(pathToModule, libraryFunction, threadFunction);
         }
 
-        public void LoadLibrary(string pathToModule, LoadLibraryFunction libraryFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public ModuleInfo LoadLibrary(string pathToModule, LoadLibraryFunction libraryFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
-            InjectModule(pathToModule, libraryFunction, threadFunction);
+            return InjectModule(pathToModule, libraryFunction, threadFunction);
+        }
+
+        public ModuleInfo InjectLibrary(byte[] bytes, LoadLibraryFunction libraryFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            return InjectModule(bytes, libraryFunction, threadFunction);
+        }
+
+        public ModuleInfo LoadLibrary(byte[] bytes, LoadLibraryFunction libraryFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        {
+            return InjectModule(bytes, libraryFunction, threadFunction);
         }
 
         public ScanResultInt32 ScanMemoryForInt32(int value, bool allModules = false)
@@ -6905,7 +6941,15 @@ namespace MemoryHacks
                 EnumThreadWindows(thread.Id,
                 (hWnd, lParam) =>
                 {
-                    windows.Add(new WindowInfo(hWnd, DiagnosticsProcess, thread, (uint)DiagnosticsProcess.Id, (uint)thread.Id));
+                    try
+                    {
+                        windows.Add(new WindowInfo(hWnd, DiagnosticsProcess, thread, (uint)DiagnosticsProcess.Id, (uint)thread.Id));
+                    }
+                    catch
+                    {
+
+                    }
+
                     return true;
                 },
                 IntPtr.Zero);
@@ -6933,9 +6977,16 @@ namespace MemoryHacks
         {
             foreach (WindowInfo windowInfo in GetWindows())
             {
-                if (windowInfo.IsMainWindow)
+                try
                 {
-                    return windowInfo;
+                    if (windowInfo.IsMainWindow)
+                    {
+                        return windowInfo;
+                    }
+                }
+                catch
+                {
+
                 }
             }
 
@@ -6948,13 +6999,131 @@ namespace MemoryHacks
 
             foreach (WindowInfo info in GetWindows())
             {
-                if (info.IsVisible)
+                try
                 {
-                    windows.Add(info);
+                    if (info.IsVisible)
+                    {
+                        windows.Add(info);
+                    }
+                }
+                catch
+                {
+
                 }
             }
 
             return windows;
+        }
+
+        public WindowInfo GetWindowByTitle(string title)
+        {
+            foreach (WindowInfo info in GetWindows())
+            {
+                try
+                {
+                    if (info.WindowTitle.Equals(title))
+                    {
+                        return info;
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            throw new Exception("Could not find a window with that title.");
+        }
+
+        public WindowInfo GetWindowByClassName(string className)
+        {
+            foreach (WindowInfo info in GetWindows())
+            {
+                try
+                {
+                    if (info.ClassName.Equals(className))
+                    {
+                        return info;
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            throw new Exception("Could not find a window with that class name.");
+        }
+
+        public List<WindowInfo> GetWindowsByTitle(string title)
+        {
+            List<WindowInfo> windows = new List<WindowInfo>();
+
+            foreach (WindowInfo info in GetWindows())
+            {
+                try
+                {
+                    if (info.WindowTitle.Equals(title))
+                    {
+                        windows.Add(info);
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return windows;
+        }
+
+        public List<WindowInfo> GetWindowsByCaption(string title)
+        {
+            List<WindowInfo> windows = new List<WindowInfo>();
+
+            foreach (WindowInfo info in GetWindows())
+            {
+                try
+                {
+                    if (info.WindowTitle.Equals(title))
+                    {
+                        windows.Add(info);
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return windows;
+        }
+
+        public List<WindowInfo> GetWindowsByClassName(string className)
+        {
+            List<WindowInfo> windows = new List<WindowInfo>();
+
+            foreach (WindowInfo info in GetWindows())
+            {
+                try
+                {
+                    if (info.ClassName.Equals(className))
+                    {
+                        windows.Add(info);
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
+            return windows;
+        }
+
+        public WindowInfo GetWindowByCaption(string caption)
+        {
+            return GetWindowByTitle(caption);
         }
 
         public List<WindowInfo> GetVisibleWindowsInformations()
@@ -7771,6 +7940,139 @@ namespace MemoryHacks
             {
                 NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, allocatedMemoryAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
             }
+        }
+
+        public void FillNOPs(IntPtr address, uint nops)
+        {
+            byte[] bytes = new byte[nops];
+
+            for (int i = 0; i < nops; i++)
+            {
+                bytes[i] = 0x90;
+            }
+
+            WriteByteArray(address, bytes);
+        }
+
+        public void SetNOPs(IntPtr address, uint nops)
+        {
+            FillNOPs(address, nops);
+        }
+
+        public void FillNOPs(uint address, uint nops)
+        {
+            FillNOPs((IntPtr)address, nops);
+        }
+
+        public void SetNOPs(uint address, uint nops)
+        {
+            FillNOPs((IntPtr)address, nops);
+        }
+
+        public void DeleteInstructions(IntPtr address, uint size)
+        {
+            FillNOPs(address, size);
+        }
+
+        public void DeleteInstructions(uint address, uint size)
+        {
+            FillNOPs(address, size);
+        }
+
+        public void DeleteFunction(IntPtr address, uint size)
+        {
+            FillNOPs(address, size);
+        }
+
+        public void DeleteFunction(uint address, uint size)
+        {
+            FillNOPs(address, size);
+        }
+
+        public byte[] ParseStringBytes(string str)
+        {
+            return Encoding.ASCII.GetBytes(str);
+        }
+
+        public void PatchBytes(IntPtr address, byte[] bytes)
+        {
+            WriteByteArray(address, bytes);
+        }
+
+        public void PatchBytes(IntPtr address, string bytes)
+        {
+            WriteByteArray(address, ParseStringBytes(bytes));
+        }
+
+        public void PatchBytes(uint address, byte[] bytes)
+        {
+            WriteByteArray(address, bytes);
+        }
+
+        public void PatchBytes(uint address, string bytes)
+        {
+            WriteByteArray(address, ParseStringBytes(bytes));
+        }
+
+        public void WriteByteArray(IntPtr address, string bytes)
+        {
+            WriteByteArray(address, ParseStringBytes(bytes));
+        }
+
+        public void WriteBytes(IntPtr address, string bytes)
+        {
+            WriteByteArray(address, ParseStringBytes(bytes));
+        }
+
+        public void WriteByteArray(uint address, string bytes)
+        {
+            WriteByteArray(address, ParseStringBytes(bytes));
+        }
+
+        public void WriteBytes(uint address, string bytes)
+        {
+            WriteByteArray(address, ParseStringBytes(bytes));
+        }
+
+        public void UnprotectMemory(IntPtr offset, uint size)
+        {
+            uint newProtect = 0;
+
+            if (ProtectMethod.Equals(MemoryMethod.KERNEL32))
+            {
+                VirtualProtectEx(ProcessHandle, offset, (UIntPtr)size, 64, out newProtect);
+            }
+            else if (ProtectMethod.Equals(MemoryMethod.NTDLL))
+            {
+                IntPtr theOffset = offset;
+                uint numberBytes = size;
+                NtProtectVirtualMemory(ProcessHandle, ref theOffset, ref numberBytes, 64, ref newProtect);
+            }
+        }
+
+        public void UnprotectMemory(uint offset, uint size)
+        {
+            UnprotectMemory((IntPtr)offset, size);
+        }
+
+        public void UnprotectBytes(IntPtr offset, uint size)
+        {
+            UnprotectMemory(offset, size);
+        }
+
+        public void UnprotectRegion(IntPtr offset, uint size)
+        {
+            UnprotectMemory(offset, size);
+        }
+
+        public void UnprotectBytes(uint offset, uint size)
+        {
+            UnprotectMemory(offset, size);
+        }
+
+        public void UnprotectRegion(uint offset, uint size)
+        {
+            UnprotectMemory(offset, size);
         }
     }
 }
