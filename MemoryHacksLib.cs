@@ -8074,5 +8074,42 @@ namespace MemoryHacks
         {
             UnprotectMemory(offset, size);
         }
+
+        public IntPtr GetFunctionAddress(string moduleName, string functionName)
+        {
+            ModuleInfo info = GetModuleInfo(moduleName);
+            var offset = GetProcAddress(info.Module.BaseAddress, functionName).ToInt64() - info.BaseAddress.ToInt64();
+            return new IntPtr(info.Module.BaseAddress.ToInt64() + offset);
+        }
+
+        public IntPtr GetFunction(string moduleName, string functionName)
+        {
+            return GetFunctionAddress(moduleName, functionName);
+        }
+
+        public IntPtr GetFunctionAddress(string functionName)
+        {
+            return GetFunctionAddress(DiagnosticsProcess.MainModule.ModuleName, functionName);
+        }
+
+        public IntPtr GetFunction(string functionName)
+        {
+            return GetFunctionAddress(DiagnosticsProcess.MainModule.ModuleName, functionName);
+        }
+
+        public IntPtr GetGlobalFunction(string moduleName, string functionName)
+        {
+             return GetProcAddress(GetModuleHandle(moduleName), functionName);
+        }
+
+        public IntPtr AllocateMemory(uint size)
+        {
+            return VirtualAllocEx(ProcessHandle, IntPtr.Zero, size, MEM_COMMIT | MEM_RESERVE, 0x40);
+        }
+
+        public IntPtr Allocate(uint size)
+        {
+            return AllocateMemory(size);
+        }
     }
 }
