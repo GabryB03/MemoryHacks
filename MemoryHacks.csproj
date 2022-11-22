@@ -41,6 +41,11 @@
     <Reference Include="System.Numerics" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Functions Execution\CallingConvention.cs" />
+    <Compile Include="Functions Execution\IMarshalledValue.cs" />
+    <Compile Include="Functions Execution\LocalUnmanagedMemory.cs" />
+    <Compile Include="Functions Execution\MarshalType.cs" />
+    <Compile Include="Functions Execution\MarshalValue.cs" />
     <Compile Include="Memory Scanning\Scan Results\ScanResultByte.cs" />
     <Compile Include="Memory Scanning\Scan Results\ScanResultByteArray.cs" />
     <Compile Include="Memory Scanning\Scan Results\ScanResultInt16.cs" />

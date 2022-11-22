@@ -83,6 +83,31 @@ namespace MemoryHacks
         [DllImport("ntdll.dll", SetLastError = true)]
         private static extern IntPtr NtProtectVirtualMemory(IntPtr ProcessHandle, ref IntPtr BaseAddress, ref UInt32 NumberOfBytesToProtect, UInt32 NewAccessProtection, ref UInt32 OldAccessProtection);
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ModuleInformation
+        {
+            public IntPtr lpBaseOfDll;
+            public uint SizeOfImage;
+            public IntPtr EntryPoint;
+        }
+
+        internal enum ModuleFilter
+        {
+            ListModulesDefault = 0x0,
+            ListModules32Bit = 0x01,
+            ListModules64Bit = 0x02,
+            ListModulesAll = 0x03,
+        }
+
+        [DllImport("psapi.dll")]
+        private static extern bool EnumProcessModulesEx(IntPtr hProcess, [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.U4)][In][Out] IntPtr[] lphModule, int cb, [MarshalAs(UnmanagedType.U4)] out int lpcbNeeded, uint dwFilterFlag);
+
+        [DllImport("psapi.dll")]
+        private static extern uint GetModuleFileNameEx(IntPtr hProcess, IntPtr hModule, [Out] StringBuilder lpBaseName, [In][MarshalAs(UnmanagedType.U4)] uint nSize);
+
+        [DllImport("psapi.dll", SetLastError = true)]
+        private static extern bool GetModuleInformation(IntPtr hProcess, IntPtr hModule, out ModuleInformation lpmodinfo, uint cb);
+
         public int ProcessId { get; private set; }
         public IntPtr ProcessHandle { get; private set; }
         public Process DiagnosticsProcess { get; private set; }
@@ -165,13 +190,13 @@ namespace MemoryHacks
 
         public ModuleInfo GetModuleInformations(string moduleName)
         {
-            foreach (ProcessModule module in DiagnosticsProcess.Modules)
+            foreach (ModuleInfo module in GetModules())
             {
                 try
                 {
                     if (module.ModuleName == moduleName)
                     {
-                        return new ModuleInfo(module, module.BaseAddress, (uint)module.ModuleMemorySize, (uint) DiagnosticsProcess.Id, DiagnosticsProcess);
+                        return module;
                     }
                 }
                 catch
@@ -213,11 +238,47 @@ namespace MemoryHacks
             {
                 try
                 {
-                    modules.Add(new ModuleInfo(module, module.BaseAddress, (uint)module.ModuleMemorySize, (uint) DiagnosticsProcess.Id, DiagnosticsProcess));
+                    modules.Add(new ModuleInfo(module.ModuleName, module, module.BaseAddress, (uint)module.ModuleMemorySize, (uint) DiagnosticsProcess.Id, DiagnosticsProcess));
                 }
                 catch
                 {
 
+                }
+            }
+
+            IntPtr[] modulePointers = new IntPtr[0];
+            int bytesNeeded = 0;
+            EnumProcessModulesEx(ProcessHandle, modulePointers, 0, out bytesNeeded, (uint)ModuleFilter.ListModulesAll);
+            int totalNumberofModules = bytesNeeded / IntPtr.Size;
+            modulePointers = new IntPtr[totalNumberofModules];
+
+            if (EnumProcessModulesEx(ProcessHandle, modulePointers, bytesNeeded, out bytesNeeded, (uint)ModuleFilter.ListModulesAll))
+            {
+                for (int index = 0; index < totalNumberofModules; index++)
+                {
+                    StringBuilder moduleFilePath = new StringBuilder(1024);
+                    GetModuleFileNameEx(ProcessHandle, modulePointers[index], moduleFilePath, (uint)(moduleFilePath.Capacity));
+
+                    string moduleName = Path.GetFileName(moduleFilePath.ToString());
+
+                    ModuleInformation moduleInformation = new ModuleInformation();
+                    GetModuleInformation(ProcessHandle, modulePointers[index], out moduleInformation, (uint)(IntPtr.Size * (modulePointers.Length)));
+
+                    bool exists = false;
+
+                    foreach (ModuleInfo newMod in modules)
+                    {
+                        if (newMod.ModuleName.ToLower().Equals(moduleName.ToLower()) || newMod.BaseAddress.Equals(moduleInformation.lpBaseOfDll))
+                        {
+                            exists = true;
+                            break;
+                        }
+                    }
+
+                    if (!exists)
+                    {
+                        modules.Add(new ModuleInfo(moduleName, null, moduleInformation.lpBaseOfDll, moduleInformation.SizeOfImage, (uint)ProcessId, DiagnosticsProcess));
+                    }
                 }
             }
 
@@ -8077,7 +8138,24 @@ namespace MemoryHacks
 
         public IntPtr GetFunctionAddress(string moduleName, string functionName)
         {
-            ModuleInfo info = GetModuleInfo(moduleName);
+            ModuleInfo info = null;
+
+            foreach (ModuleInfo theInfo in GetModules())
+            {
+                try
+                {
+                    if (theInfo.ModuleName.ToLower().StartsWith(moduleName.ToLower()))
+                    {
+                        info = theInfo;
+                        break;
+                    }
+                }
+                catch
+                {
+
+                }
+            }
+
             var offset = GetProcAddress(info.Module.BaseAddress, functionName).ToInt64() - info.BaseAddress.ToInt64();
             return new IntPtr(info.Module.BaseAddress.ToInt64() + offset);
         }
@@ -8110,6 +8188,390 @@ namespace MemoryHacks
         public IntPtr Allocate(uint size)
         {
             return AllocateMemory(size);
+        }
+
+        public IntPtr MakeAbsolute(IntPtr address)
+        {
+            return new IntPtr(DiagnosticsProcess.MainModule.BaseAddress.ToInt64() + address.ToInt64());
+        }
+
+        public IntPtr MakeRelative(IntPtr address)
+        {
+            return new IntPtr(address.ToInt64() - DiagnosticsProcess.MainModule.BaseAddress.ToInt64());
+        }
+
+        public IntPtr MakeAbsoluteAddress(IntPtr address)
+        {
+            return new IntPtr(DiagnosticsProcess.MainModule.BaseAddress.ToInt64() + address.ToInt64());
+        }
+
+        public IntPtr MakeRelativeAddress(IntPtr address)
+        {
+            return new IntPtr(address.ToInt64() - DiagnosticsProcess.MainModule.BaseAddress.ToInt64());
+        }
+
+        public uint MakeAbsolute(uint address)
+        {
+            return (uint)MakeAbsolute((IntPtr)address);
+        }
+
+        public uint MakeRelative(uint address)
+        {
+            return (uint)MakeRelative((IntPtr)address);
+        }
+
+        public uint MakeAbsoluteAddress(uint address)
+        {
+            return (uint)MakeAbsolute((IntPtr)address);
+        }
+
+        public uint MakeRelativeAddress(uint address)
+        {
+            return (uint)MakeRelative((IntPtr)address);
+        }
+
+        public void Write<T>(IntPtr address, T[] array)
+        {
+            var valuesInBytes = new byte[MarshalType<T>.Size * array.Length];
+
+            for (var i = 0; i < array.Length; i++)
+            {
+                var offsetInArray = MarshalType<T>.Size * i;
+                Buffer.BlockCopy(MarshalType<T>.ObjectToByteArray(array[i]), 0, valuesInBytes, offsetInArray, MarshalType<T>.Size);
+            }
+
+            WriteBytes(address, valuesInBytes);
+        }
+
+        public void Write<T>(IntPtr address, T val)
+        {
+            Write(address, new T[1] { val });
+        }
+
+        public void Execute(IntPtr address, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            string assemblyCode = "";
+
+            if (callingConvention.Equals(CallingConvention.Stdcall))
+            {
+                var marshalledParameters = parameters.Select(p => MarshalValue.Marshal(this, p)).Cast<IMarshalledValue>().ToArray();
+                var ret = new StringBuilder();
+
+                foreach (var parameter in marshalledParameters.Reverse())
+                {
+                    ret.AppendLine("push " + parameter.Reference);
+                }
+
+                assemblyCode = $"{ret}\ncall {address}\nretn\n";
+            }
+            else if (callingConvention.Equals(CallingConvention.Cdecl))
+            {
+                var marshalledParameters = parameters.Select(p => MarshalValue.Marshal(this, p)).Cast<IMarshalledValue>().ToArray();
+                var ret = new StringBuilder();
+
+                foreach (var parameter in marshalledParameters.Reverse())
+                {
+                    ret.AppendLine("push " + parameter.Reference);
+                }
+
+                assemblyCode = $"{ret}\ncall {address}\nadd esp, {marshalledParameters.Length * 4}\nretn\n";
+            }
+            else if (callingConvention.Equals(CallingConvention.Fastcall))
+            {
+                var marshalledParameters = parameters.Select(p => MarshalValue.Marshal(this, p)).Cast<IMarshalledValue>().ToArray();
+                var ret = new StringBuilder();
+                List<IntPtr> paramList = new List<IntPtr>();
+
+                foreach (var param in marshalledParameters)
+                {
+                    paramList.Add(param.Reference);
+                }
+
+                if (paramList.Count > 0)
+                {
+                    ret.AppendLine("mov ecx, " + paramList[0]);
+                    paramList.RemoveAt(0);
+                }
+
+                if (paramList.Count > 0)
+                {
+                    ret.AppendLine("mov edx, " + paramList[0]);
+                    paramList.RemoveAt(0);
+                }
+
+                paramList.Reverse();
+
+                foreach (var parameter in paramList)
+                {
+                    ret.AppendLine("push " + parameter);
+                }
+
+                assemblyCode = $"{ret}\ncall {address}\nretn\n";
+            }
+            else if (callingConvention.Equals(CallingConvention.Thiscall))
+            {
+                var marshalledParameters = parameters.Select(p => MarshalValue.Marshal(this, p)).Cast<IMarshalledValue>().ToArray();
+                var ret = new StringBuilder();
+                List<IntPtr> paramList = new List<IntPtr>();
+
+                foreach (var param in marshalledParameters)
+                {
+                    paramList.Add(param.Reference);
+                }
+
+                if (paramList.Count > 0)
+                {
+                    ret.AppendLine("mov ecx, " + paramList[0]);
+                    paramList.RemoveAt(0);
+                }
+
+                paramList.Reverse();
+
+                foreach (var parameter in paramList)
+                {
+                    ret.AppendLine("push " + parameter);
+                }
+
+                assemblyCode = $"{ret}\ncall {address}\nretn\n";
+            }
+
+            byte[] compiled = Binarysharp.Assemblers.Fasm.FasmNet.Assemble("use32\norg 0x0\n" + assemblyCode);
+
+            IntPtr remoteThread = IntPtr.Zero;
+            IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)compiled.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
+
+            byte[] newCompiled = Binarysharp.Assemblers.Fasm.FasmNet.Assemble(string.Format("use32\norg 0x{0:X8}\n", allocatedMemoryAddress.ToInt64()) + assemblyCode);
+
+            if (WriteMethod.Equals(MemoryMethod.KERNEL32))
+            {
+                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, newCompiled, (uint)newCompiled.Length, 0);
+            }
+            else if (WriteMethod.Equals(MemoryMethod.NTDLL))
+            {
+                uint bytesWritten = 0;
+                NtWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, newCompiled, (uint)newCompiled.Length, ref bytesWritten);
+            }
+
+            if (assemblyInjectionMethod.Equals(AssemblyInjectionMethod.ClassicCreateThread))
+            {
+                CreateRemoteThread(ProcessHandle, IntPtr.Zero, 0, allocatedMemoryAddress, IntPtr.Zero, 0, IntPtr.Zero);
+            }
+            else if (assemblyInjectionMethod.Equals(AssemblyInjectionMethod.ClassicRtlCreateUserThread))
+            {
+                RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, allocatedMemoryAddress, IntPtr.Zero, ref remoteThread, IntPtr.Zero);
+            }
+            else if (assemblyInjectionMethod.Equals(AssemblyInjectionMethod.ClassicNtCreateThreadEx))
+            {
+                NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, allocatedMemoryAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
+            }
+        }
+
+        public void Execute(string moduleName, string functionName, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(GetFunction(moduleName, functionName), callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void Execute(uint address, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute((IntPtr)address, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void ExecuteFunction(IntPtr address, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(address, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void ExecuteFunction(string moduleName, string functionName, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(moduleName, functionName, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void ExecuteFunction(uint address, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(address, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void CallFunction(IntPtr address, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(address, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void CallFunction(string moduleName, string functionName, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(moduleName, functionName, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void CallFunction(uint address, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(address, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void InvokeFunction(IntPtr address, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(address, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void InvokeFunction(string moduleName, string functionName, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(moduleName, functionName, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void InvokeFunction(uint address, CallingConvention callingConvention, AssemblyInjectionMethod assemblyInjectionMethod, params dynamic[] parameters)
+        {
+            Execute(address, callingConvention, assemblyInjectionMethod, parameters);
+        }
+
+        public void InjectAssemblyCode(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            byte[] compiled = Binarysharp.Assemblers.Fasm.FasmNet.Assemble("use32\norg 0x0\n" + asm);
+
+            IntPtr remoteThread = IntPtr.Zero;
+            IntPtr allocatedMemoryAddress = VirtualAllocEx(ProcessHandle, IntPtr.Zero, (uint)compiled.Length, MEM_COMMIT | MEM_RESERVE, 0x40);
+
+            byte[] newCompiled = Binarysharp.Assemblers.Fasm.FasmNet.Assemble(string.Format("use32\norg 0x{0:X8}\n", address == IntPtr.Zero ? allocatedMemoryAddress.ToInt64() : address.ToInt64()) + asm);
+
+            if (WriteMethod.Equals(MemoryMethod.KERNEL32))
+            {
+                WriteProcessMemory(ProcessHandle, allocatedMemoryAddress, newCompiled, (uint)newCompiled.Length, 0);
+            }
+            else if (WriteMethod.Equals(MemoryMethod.NTDLL))
+            {
+                uint bytesWritten = 0;
+                NtWriteVirtualMemory(ProcessHandle, allocatedMemoryAddress, newCompiled, (uint)newCompiled.Length, ref bytesWritten);
+            }
+
+            if (method.Equals(AssemblyInjectionMethod.ClassicCreateThread))
+            {
+                CreateRemoteThread(ProcessHandle, IntPtr.Zero, 0, allocatedMemoryAddress, IntPtr.Zero, 0, IntPtr.Zero);
+            }
+            else if (method.Equals(AssemblyInjectionMethod.ClassicRtlCreateUserThread))
+            {
+                RtlCreateUserThread(ProcessHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, allocatedMemoryAddress, IntPtr.Zero, ref remoteThread, IntPtr.Zero);
+            }
+            else if (method.Equals(AssemblyInjectionMethod.ClassicNtCreateThreadEx))
+            {
+                NtCreateThreadEx(ref remoteThread, 0x1FFFFF, IntPtr.Zero, ProcessHandle, allocatedMemoryAddress, IntPtr.Zero, false, 0, 0, 0, IntPtr.Zero);
+            }
+        }
+
+        public void InjectAsmCode(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void InjectAssembly(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void InjectAsm(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void InjectAssemblyString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void InjectShell(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void InjectShellcode(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void InjectShellcodeString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void InjectShellString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void ExecuteAsmCode(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void ExecuteAssembly(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void ExecuteAsm(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void ExecuteAssemblyString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void ExecuteShell(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void ExecuteShellcode(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void ExecuteShellcodeString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void ExecuteShellString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void RunAsmCode(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void RunAssembly(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void RunAsm(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void RunAssemblyString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void RunShell(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void RunShellcode(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void RunShellcodeString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
+        }
+
+        public void RunShellString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
+        {
+            InjectAssemblyCode(asm, address, method);
         }
     }
 }

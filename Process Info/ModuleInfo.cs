@@ -12,6 +12,7 @@ namespace MemoryHacks
         public ProcessModule Module { get; private set; }
         public Process DiagnosticsProcess { get; private set; }
         public uint ProcessId { get; private set; }
+        public string ModuleName { get; private set; }
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
         private static extern IntPtr GetModuleHandle(string lpModuleName);
@@ -28,8 +29,9 @@ namespace MemoryHacks
         [DllImport("ntdll.dll", SetLastError = true)]
         private static extern IntPtr NtCreateThreadEx(ref IntPtr threadHandle, UInt32 desiredAccess, IntPtr objectAttributes, IntPtr processHandle, IntPtr startAddress, IntPtr parameter, bool inCreateSuspended, Int32 stackZeroBits, Int32 sizeOfStack, Int32 maximumStackSize, IntPtr attributeList);
 
-        public ModuleInfo(ProcessModule module, IntPtr baseAddress, uint memorySize, uint processId, Process diagnosticsProcess)
+        public ModuleInfo(string moduleName, ProcessModule module, IntPtr baseAddress, uint memorySize, uint processId, Process diagnosticsProcess)
         {
+            ModuleName = moduleName;
             Module = module;
             BaseAddress = baseAddress;
             MemorySize = memorySize;
