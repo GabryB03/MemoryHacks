@@ -134,6 +134,10 @@ namespace MemoryHacks
             DIRECT_IMPERSONATION = (0x0200)
         }
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWow64Process([In] IntPtr processHandle, [Out, MarshalAs(UnmanagedType.Bool)] out bool wow64Process);
+
         public MemoryHacksLib(int processId)
         {
             bool exists = false;
@@ -158,7 +162,7 @@ namespace MemoryHacks
             ProcessId = processId;
             ReadMethod = MemoryMethod.KERNEL32;
             WriteMethod = MemoryMethod.KERNEL32;
-            ProtectMethod = MemoryMethod.NTDLL;
+            ProtectMethod = MemoryMethod.KERNEL32;
         }
 
         public MemoryHacksLib(string processName)
@@ -185,7 +189,7 @@ namespace MemoryHacks
             ProcessId = processId;
             ReadMethod = MemoryMethod.KERNEL32;
             WriteMethod = MemoryMethod.KERNEL32;
-            ProtectMethod = MemoryMethod.NTDLL;
+            ProtectMethod = MemoryMethod.KERNEL32;
         }
 
         public ModuleInfo GetModuleInformations(string moduleName)
@@ -4167,12 +4171,14 @@ namespace MemoryHacks
                 }
 
                 ModuleInfo info = null;
+                int times = 10;
 
-                while (true)
+                while (times > 0)
                 {
                     try
                     {
                         info = GetModuleInfo(Path.GetFileName(pathToModule));
+                        times--;
                         break;
                     }
                     catch
@@ -4438,6 +4444,21 @@ namespace MemoryHacks
             {
 
             }
+        }
+
+        public void PauseProcess()
+        {
+            SuspendProcess();
+        }
+
+        public void KillProcess()
+        {
+            DiagnosticsProcess.Kill();
+        }
+
+        public void TerminateProcess()
+        {
+            DiagnosticsProcess.Kill();
         }
 
         public uint ConvertHexadecimalAddressToNumber(string address)
@@ -7255,7 +7276,7 @@ namespace MemoryHacks
             return IsProcessFocused();
         }
 
-        public void ExecuteCppCode(CppCode code, bool is64Bit, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public void ExecuteCppCode(CppCode code, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
             try
             {
@@ -7310,7 +7331,7 @@ namespace MemoryHacks
                 ProcessStartInfo startInfo = new ProcessStartInfo();
                 startInfo.FileName = "gcc.exe";
 
-                if (is64Bit)
+                if (Is64BitProcess())
                 {
                     startInfo.Arguments = "-shared -o \"" + rootDir + "\\Temp\\" + folderName + "\\" + dllFileName + "\" \"" + rootDir + "\\Temp\\" + folderName + "\\" + cppFileName + "\"";
                 }
@@ -7339,19 +7360,19 @@ namespace MemoryHacks
             }
         }
 
-        public void InjectCppCode(CppCode code, bool is64Bit, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public void InjectCppCode(CppCode code, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
-            ExecuteCppCode(code, is64Bit, loadFunction, threadFunction);
+            ExecuteCppCode(code, loadFunction, threadFunction);
         }
 
-        public void RunCppCode(CppCode code, bool is64Bit, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public void RunCppCode(CppCode code, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
-            ExecuteCppCode(code, is64Bit, loadFunction, threadFunction);
+            ExecuteCppCode(code, loadFunction, threadFunction);
         }
 
-        public void ForceCppCode(CppCode code, bool is64Bit, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
+        public void ForceCppCode(CppCode code, LoadLibraryFunction loadFunction = LoadLibraryFunction.LoadLibraryA, CreateThreadFunction threadFunction = CreateThreadFunction.CreateRemoteThread)
         {
-            ExecuteCppCode(code, is64Bit, loadFunction, threadFunction);
+            ExecuteCppCode(code, loadFunction, threadFunction);
         }
 
         public bool IsProcessRunning()
@@ -8230,6 +8251,46 @@ namespace MemoryHacks
             return (uint)MakeRelative((IntPtr)address);
         }
 
+        public IntPtr GetAbsolute(IntPtr address)
+        {
+            return new IntPtr(DiagnosticsProcess.MainModule.BaseAddress.ToInt64() + address.ToInt64());
+        }
+
+        public IntPtr GetRelative(IntPtr address)
+        {
+            return new IntPtr(address.ToInt64() - DiagnosticsProcess.MainModule.BaseAddress.ToInt64());
+        }
+
+        public IntPtr GetAbsoluteAddress(IntPtr address)
+        {
+            return new IntPtr(DiagnosticsProcess.MainModule.BaseAddress.ToInt64() + address.ToInt64());
+        }
+
+        public IntPtr GetRelativeAddress(IntPtr address)
+        {
+            return new IntPtr(address.ToInt64() - DiagnosticsProcess.MainModule.BaseAddress.ToInt64());
+        }
+
+        public uint GetAbsolute(uint address)
+        {
+            return (uint)MakeAbsolute((IntPtr)address);
+        }
+
+        public uint GetRelative(uint address)
+        {
+            return (uint)MakeRelative((IntPtr)address);
+        }
+
+        public uint GetAbsoluteAddress(uint address)
+        {
+            return (uint)MakeAbsolute((IntPtr)address);
+        }
+
+        public uint GetRelativeAddress(uint address)
+        {
+            return (uint)MakeRelative((IntPtr)address);
+        }
+
         public void Write<T>(IntPtr address, T[] array)
         {
             var valuesInBytes = new byte[MarshalType<T>.Size * array.Length];
@@ -8572,6 +8633,53 @@ namespace MemoryHacks
         public void RunShellString(string asm, IntPtr address, AssemblyInjectionMethod method = AssemblyInjectionMethod.ClassicCreateThread)
         {
             InjectAssemblyCode(asm, address, method);
+        }
+
+        public bool Is64Bit()
+        {
+            if (!Environment.Is64BitOperatingSystem)
+            {
+                return false;
+            }
+            
+            bool isWow64Process = false;
+            bool theResult = IsWow64Process(ProcessHandle, out isWow64Process);
+            return theResult && !isWow64Process;
+        }
+
+        public bool Is64BitProcess()
+        {
+            return Is64Bit();
+        }
+
+        public bool Is64Bits()
+        {
+            return Is64Bit();
+        }
+
+        public bool Is64BitsProcess()
+        {
+            return Is64Bit();
+        }
+
+        public bool Is32Bit()
+        {
+            return !Is64Bit();
+        }
+
+        public bool Is32Bits()
+        {
+            return !Is64Bit();
+        }
+
+        public bool Is32BitProcess()
+        {
+            return !Is64Bit();
+        }
+
+        public bool Is32BitsProcess()
+        {
+            return !Is64Bit();
         }
     }
 }
